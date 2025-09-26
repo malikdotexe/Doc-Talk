@@ -246,11 +246,11 @@ async def gemini_session_handler(client_websocket: websockets.WebSocketServerPro
     finally:
         print("Gemini session closed.")
 
-
 async def main() -> None:
-        PORT = int(os.environ.get("PORT", 9084))  # 9084 fallback for local
-        async with websockets.serve(handler, "0.0.0.0", PORT):
-            print(f"Running websocket server on port {PORT}")
+    PORT = int(os.environ.get("PORT", 9084))
+    async with websockets.serve(gemini_session_handler, "0.0.0.0", PORT):
+        print(f"Running websocket server on 0.0.0.0:{PORT}...")
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
