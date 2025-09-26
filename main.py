@@ -248,9 +248,9 @@ async def gemini_session_handler(client_websocket: websockets.WebSocketServerPro
 
 
 async def main() -> None:
-    async with websockets.serve(gemini_session_handler, "localhost", 9084):
-        print("Running websocket server localhost:9084...")
-        await asyncio.Future()  # Keep the server running indefinitely
+        PORT = int(os.environ.get("PORT", 9084))  # 9084 fallback for local
+        async with websockets.serve(handler, "0.0.0.0", PORT):
+            print(f"Running websocket server on port {PORT}")
 
 
 if __name__ == "__main__":
