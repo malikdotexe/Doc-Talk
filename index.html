@@ -147,36 +147,38 @@
     });
 
     await initializeAudioContext();
-    connect();
+    connectWithRetry();
     setControls(false);
   });
 
   // ====== WebSocket connection ======
-  function connect() {
-    console.log("Connecting to backend…");
-  webSocket = new WebSocket(URL);
+ function connectWithRetry(retries = 5, delay = 2000) {
+  console.log("Connecting to backend…");
+  const ws = new WebSocket("wss://doc-talk-u97i.onrender.com");
 
-  webSocket.onopen = () => {
-    console.log("Connected to backend ✅");
+  ws.onopen = () => {
+    console.log("Connected ✅");
     sendInitialSetupMessage();
   };
 
-  webSocket.onclose = () => {
+  ws.onclose = () => {
     console.warn("WebSocket closed.");
     if (retries > 0) {
-      console.log(`Retrying in ${delay / 1000}s… (${retries} retries left)`);
+      console.log(`Retrying in ${delay/1000}s… (${retries} left)`);
       setTimeout(() => connectWithRetry(retries - 1, delay * 2), delay);
     } else {
-      alert("Unable to connect to server. Please try refreshing.");
+      alert("Unable to connect. Please refresh.");
     }
   };
 
-  webSocket.onerror = (err) => {
+  ws.onerror = (err) => {
     console.error("WebSocket error:", err);
   };
 
-  webSocket.onmessage = receiveMessage;
-  }
+  ws.onmessage = receiveMessage;
+
+  webSocket = ws; // store reference globally if needed
+}
 
   function sendInitialSetupMessage() {
     console.log("sending setup message");
