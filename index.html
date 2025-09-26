@@ -153,25 +153,29 @@
 
   // ====== WebSocket connection ======
   function connect() {
-    console.log("connecting: ", URL);
+    console.log("Connecting to backend…");
+  webSocket = new WebSocket(URL);
 
-    webSocket = new WebSocket(URL);
+  webSocket.onopen = () => {
+    console.log("Connected to backend ✅");
+    sendInitialSetupMessage();
+  };
 
-    webSocket.onclose = (event) => {
-      console.log("websocket closed: ", event);
-      alert("Connection closed");
-    };
+  webSocket.onclose = () => {
+    console.warn("WebSocket closed.");
+    if (retries > 0) {
+      console.log(`Retrying in ${delay / 1000}s… (${retries} retries left)`);
+      setTimeout(() => connectWithRetry(retries - 1, delay * 2), delay);
+    } else {
+      alert("Unable to connect to server. Please try refreshing.");
+    }
+  };
 
-    webSocket.onerror = (event) => {
-      console.log("websocket error: ", event);
-    };
+  webSocket.onerror = (err) => {
+    console.error("WebSocket error:", err);
+  };
 
-    webSocket.onopen = (event) => {
-      console.log("websocket open: ", event);
-      sendInitialSetupMessage();
-    };
-
-    webSocket.onmessage = receiveMessage;
+  webSocket.onmessage = receiveMessage;
   }
 
   function sendInitialSetupMessage() {
