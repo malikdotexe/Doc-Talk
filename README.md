@@ -1,7 +1,7 @@
 # Doc-Talk
 
-Don’t just chat with your documents—talk to them. Upload a PDF, report, or research paper, and have a real-time voice-to-voice conversation powered by **Gemini Live + LangChain**.  
-Ask questions out loud, get instant spoken answers, and dive deeper without ever typing. It’s like giving your documents a voice.
+Don't just chat with your documents—talk to them. Upload a PDF, report, or research paper, and have a real-time voice-to-voice conversation powered by **Gemini Live + LangChain**.  
+Ask questions out loud, get instant spoken answers, and dive deeper without ever typing. It's like giving your documents a voice.
 
 ---
 
@@ -12,68 +12,147 @@ Ask questions out loud, get instant spoken answers, and dive deeper without ever
 
 ---
 
-## 🔧 Environment Variables
+## 🛠️ Tech Stack
 
-Create a `.env` file in the project root:
+### Frontend
+- **Next.js 14** (App Router)
+- **TypeScript**
+- **Tailwind CSS**
+- **React Hooks**
 
+### Backend
+- **Python 3.13**
+- **websockets**
+- **google-genai**
+- **LangChain / LlamaIndex**
+
+---
+
+## 🔧 Setup
+
+### Prerequisites
+- Node.js 18+ and npm/yarn
+- Python 3.13+
+- Google Gemini API Key
+
+### Frontend Setup
+
+1. Install dependencies:
+```bash
+npm install
 ```
-# .env.example
-GOOGLE_API_KEY=your_google_gemini_api_key_here
-```
-On Render or any deployment platform, set GOOGLE_API_KEY in the service’s Environment Variables.
 
-📦 Installation
-Clone the repo:
-
-```
-git clone https://github.com/malikdotexe/doc-talk.git
-cd doc-talk
+2. Create a `.env.local` file (optional - defaults to production WebSocket):
+```bash
+NEXT_PUBLIC_WS_URL=ws://localhost:9084  # For local development
 ```
 
-Create a virtual environment and install dependencies:
-
+3. Run the development server:
+```bash
+npm run dev
 ```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Backend Setup
+
+1. Create a virtual environment:
+```bash
 python3 -m venv .venv
-source .venv/bin/activate    # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+2. Install Python dependencies:
+```bash
 pip install -r requirements.txt
 ```
-▶️ Starting the Backend (WebSocket server)
-Run locally:
 
+3. Create a `.env` file:
+```bash
+GOOGLE_API_KEY=your_google_gemini_api_key_here
 ```
+
+4. Run the backend WebSocket server:
+```bash
 python main.py
 ```
-By default, it binds to:
-ws://localhost:9084
-On Render (or any cloud platform), it binds automatically to:
 
+By default, it binds to `ws://localhost:9084`
 
-💻 Running the Frontend
-Open index.html in your browser:
-```
-python -m http.server 8080
-```
-Then visit:
-```
-http://localhost:8080/index.html
-```
+---
 
-The frontend connects to the backend WebSocket server.
-Update the const URL in index.html depending on your environment:
+## 📦 Project Structure
 
 ```
-// For local development
-const URL = "ws://localhost:9084";
+Doc-Talk/
+├── app/                    # Next.js app directory
+│   ├── layout.tsx         # Root layout
+│   ├── page.tsx           # Home page
+│   └── globals.css        # Global styles
+├── components/            # React components
+│   ├── Header.tsx
+│   ├── Hero.tsx
+│   ├── MainContent.tsx
+│   ├── Features.tsx
+│   ├── Demo.tsx
+│   └── Footer.tsx
+├── hooks/                 # Custom React hooks
+│   └── useAudioWebSocket.ts
+├── public/                # Static files
+│   └── pcm-processor.js   # AudioWorklet processor
+├── main.py               # Python WebSocket server
+├── requirements.txt      # Python dependencies
+└── package.json          # Node.js dependencies
 ```
 
+---
 
-📚 Tech Stack
+## 🚀 Deployment
 
-Python 3.13
-websockets
-google-genai
-LangChain
-Render (deployment)
+### Frontend (Next.js)
+Deploy to Vercel, Netlify, or any platform that supports Next.js:
+```bash
+npm run build
+npm start
+```
 
-Screenshot-
-<img width="1440" height="900" alt="Screenshot 2025-09-26 at 12 28 08 PM" src="https://github.com/user-attachments/assets/d154feb8-5c35-4a69-92bf-a682a3a56b48" />
+### Backend (Python)
+Deploy the Python server to Render, Railway, or any platform that supports Python WebSocket servers.
+
+Set the `GOOGLE_API_KEY` environment variable in your deployment platform.
+
+Update `NEXT_PUBLIC_WS_URL` in your frontend environment variables to point to your deployed backend.
+
+---
+
+## 📝 Environment Variables
+
+### Frontend (.env.local)
+- `NEXT_PUBLIC_WS_URL` - WebSocket server URL (optional, defaults to production)
+
+### Backend (.env)
+- `GOOGLE_API_KEY` - Your Google Gemini API key (required)
+
+---
+
+## 📚 Development
+
+### Building for Production
+```bash
+npm run build
+```
+
+### Running Production Build
+```bash
+npm start
+```
+
+### Linting
+```bash
+npm run lint
+```
+
+---
+
+## 📸 Screenshot
+<img width="1440" height="900" alt="Screenshot 2025-09-26 at 12 28 08 PM" src="https://github.com/user-attachments/assets/d154feb8-5c35-4a69-92bf-a682a3a56b48" />
