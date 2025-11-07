@@ -1,6 +1,6 @@
 # Doc-Talk
 
-Don't just chat with your documents—talk to them. Upload a PDF, report, or research paper, and have a real-time voice-to-voice conversation powered by **Gemini Live + LangChain**.  
+Don't just chat with your documents—talk to them. Upload a PDF, report, or research paper, and have a real-time voice-to-voice conversation powered by **Gemini Live + LlamaIndex(RAG)**.  
 Ask questions out loud, get instant spoken answers, and dive deeper without ever typing. It's like giving your documents a voice.
 
 ---
@@ -24,7 +24,7 @@ Ask questions out loud, get instant spoken answers, and dive deeper without ever
 - **Python 3.13**
 - **websockets**
 - **google-genai**
-- **LangChain / LlamaIndex**
+- **LlamaIndex/ LangChain**
 
 ---
 
