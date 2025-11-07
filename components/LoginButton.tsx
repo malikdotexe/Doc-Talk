@@ -6,7 +6,7 @@ export default function LoginButton() {
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: window.location.href
+        redirectTo: "https://doc-talk-beryl.vercel.app/auth/callback"
       }
     });
   }
