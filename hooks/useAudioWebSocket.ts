@@ -143,7 +143,19 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
   const sendVoiceMessage = useCallback(
     (b64PCM: string) => {
       if (!webSocketRef.current) {
-        console.log('websocket not initialized');
+        console.warn('WebSocket not initialized, cannot send audio');
+        return;
+      }
+
+      // Check if WebSocket is in a valid state to send
+      if (webSocketRef.current.readyState !== WebSocket.OPEN) {
+        console.warn(`WebSocket not open (state: ${webSocketRef.current.readyState}), cannot send audio`);
+        
+        // If we're recording and WebSocket is closed, try to reconnect
+        if (isRecording && webSocketRef.current.readyState === WebSocket.CLOSED) {
+          console.log('Attempting to reconnect WebSocket...');
+          connectWithRetry(3, 1000);
+        }
         return;
       }
 
@@ -163,9 +175,16 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
         console.log('sent payload with audio data');
       } catch (err) {
         console.error('Error sending audio message:', err);
+        // If send fails, WebSocket might be closed
+        if (err instanceof Error && err.message.includes('CLOSED')) {
+          console.warn('WebSocket closed during send, will attempt reconnect');
+          if (isRecording) {
+            connectWithRetry(3, 1000);
+          }
+        }
       }
     },
-    []
+    [isRecording]
   );
 
   // Handle WebSocket messages
@@ -220,10 +239,15 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
         console.warn('WebSocket closed.', event.code, event.reason);
         setIsConnected(false);
         
-        // Only retry if it wasn't a normal closure and we have retries left
-        if (event.code !== 1000 && retries > 0) {
-          console.log(`Retrying in ${delay / 1000}s… (${retries} left)`);
-          setTimeout(() => connectWithRetry(retries - 1, delay * 2), delay);
+        // Always try to reconnect if we're recording (user is actively using the app)
+        // or if it wasn't a normal closure
+        if (isRecording || (event.code !== 1000 && retries > 0)) {
+          if (retries > 0) {
+            console.log(`Retrying in ${delay / 1000}s… (${retries} left)`);
+            setTimeout(() => connectWithRetry(retries - 1, delay * 2), delay);
+          } else {
+            console.error('Unable to connect after retries. Please refresh.');
+          }
         } else if (retries === 0) {
           console.error('Unable to connect after retries. Please refresh.');
         }
@@ -238,7 +262,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
 
       webSocketRef.current = ws;
     },
-    [sendInitialSetupMessage, receiveMessage]
+    [sendInitialSetupMessage, receiveMessage, isRecording]
   );
 
   // Start audio input
@@ -276,6 +300,14 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
       if (chunkTimerRef.current) clearInterval(chunkTimerRef.current);
       chunkTimerRef.current = setInterval(() => {
         if (pcmDataRef.current.length === 0) return;
+
+        // Check if WebSocket is available before processing
+        if (!webSocketRef.current || webSocketRef.current.readyState !== WebSocket.OPEN) {
+          console.warn('WebSocket not available, skipping audio chunk');
+          // Clear the buffer to prevent accumulation
+          pcmDataRef.current = [];
+          return;
+        }
 
         const buffer = new ArrayBuffer(pcmDataRef.current.length * 2);
         const view = new DataView(buffer);

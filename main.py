@@ -269,143 +269,155 @@ async def gemini_session_handler(client_websocket):
             print("Connected")
 
             async def send_to_gemini():
-                async for message in client_websocket:
-                    data = json.loads(message)
+                try:
+                    async for message in client_websocket:
+                        try:
+                            data = json.loads(message)
 
-                    # Handle direct tool_call from client (e.g., delete_document)
-                    if "realtime_input" in data and "tool_call" in data["realtime_input"]:
-                        tool_call_data = data["realtime_input"]["tool_call"]
-                        if "function_calls" in tool_call_data:
-                            for call in tool_call_data["function_calls"]:
-                                fn = call.get("name")
-                                args = call.get("args", {})
-                                
-                                try:
-                                    # Handle delete_document directly
-                                    if fn == "delete_document":
-                                        result = delete_document(user_id, args.get("filename", ""))
-                                        # Send confirmation back to client
-                                        await client_websocket.send(json.dumps({
-                                            "text": f"✅ {result}"
-                                        }))
-                                    # Handle query_docs directly if needed
-                                    elif fn == "query_docs":
-                                        result = query_docs(args.get("query", ""), user_id)
-                                        await client_websocket.send(json.dumps({
-                                            "text": f"🔍 {result}"
-                                        }))
-                                    else:
-                                        await client_websocket.send(json.dumps({
-                                            "text": f"❌ Unknown function: {fn}"
-                                        }))
-                                except Exception as e:
-                                    error_msg = f"Error executing {fn}: {str(e)}"
-                                    print(f"❌ {error_msg}")
-                                    import traceback
-                                    traceback.print_exc()
-                                    await client_websocket.send(json.dumps({
-                                        "text": f"❌ {error_msg}"
-                                    }))
-                        continue
-
-                    if "realtime_input" in data:
-                        for chunk in data["realtime_input"].get("media_chunks", []):
-                            if chunk["mime_type"] == "audio/pcm":
-                                await session.send(input=chunk)
-
-                            elif chunk["mime_type"] == "application/pdf":
-                                filename = chunk["filename"]
-                                use_ocr = chunk.get("ocr", False)
-                                storage_path = chunk["storage_path"]  # Already uploaded from frontend
-
-                                try:
-                                    print(f"📄 Processing PDF: {filename} (OCR: {use_ocr})")
-                                    
-                                    # 1) Download raw PDF bytes directly from Supabase
-                                    try:
-                                        download_response = supabase.storage.from_("pdfs").download(storage_path)
+                            # Handle direct tool_call from client (e.g., delete_document)
+                            if "realtime_input" in data and "tool_call" in data["realtime_input"]:
+                                tool_call_data = data["realtime_input"]["tool_call"]
+                                if "function_calls" in tool_call_data:
+                                    for call in tool_call_data["function_calls"]:
+                                        fn = call.get("name")
+                                        args = call.get("args", {})
                                         
-                                        # Handle different response types from Supabase Python client
-                                        if isinstance(download_response, bytes):
-                                            pdf_bytes = download_response
-                                        elif hasattr(download_response, 'data'):
-                                            pdf_bytes = download_response.data
-                                        elif hasattr(download_response, 'content'):
-                                            pdf_bytes = download_response.content
-                                        else:
-                                            # Try to read as bytes if it's a file-like object
-                                            pdf_bytes = download_response.read() if hasattr(download_response, 'read') else download_response
-                                        
-                                        if not pdf_bytes:
-                                            raise Exception(f"Download returned empty data for {storage_path}")
-                                    except Exception as download_error:
-                                        raise Exception(f"Failed to download PDF from Supabase: {str(download_error)}")
-                                    
-                                    print(f"  Downloaded {len(pdf_bytes)} bytes")
+                                        try:
+                                            # Handle delete_document directly
+                                            if fn == "delete_document":
+                                                result = delete_document(user_id, args.get("filename", ""))
+                                                # Send confirmation back to client
+                                                await client_websocket.send(json.dumps({
+                                                    "text": f"✅ {result}"
+                                                }))
+                                            # Handle query_docs directly if needed
+                                            elif fn == "query_docs":
+                                                result = query_docs(args.get("query", ""), user_id)
+                                                await client_websocket.send(json.dumps({
+                                                    "text": f"🔍 {result}"
+                                                }))
+                                            else:
+                                                await client_websocket.send(json.dumps({
+                                                    "text": f"❌ Unknown function: {fn}"
+                                                }))
+                                        except Exception as e:
+                                            error_msg = f"Error executing {fn}: {str(e)}"
+                                            print(f"❌ {error_msg}")
+                                            import traceback
+                                            traceback.print_exc()
+                                            await client_websocket.send(json.dumps({
+                                                "text": f"❌ {error_msg}"
+                                            }))
+                                continue
 
-                                    # 2) Insert metadata if not exists (avoid duplicates)
-                                    metadata_result = supabase.table("user_documents").upsert({
-                                        "user_id": user_id,
-                                        "filename": filename,
-                                        "original_path": storage_path
-                                    }, on_conflict="user_id,filename").execute()
-                                    print(f"  Metadata stored/updated")
+                            if "realtime_input" in data:
+                                for chunk in data["realtime_input"].get("media_chunks", []):
+                                    if chunk["mime_type"] == "audio/pcm":
+                                        print(f"🎤 Received audio chunk ({len(chunk.get('data', ''))} bytes)")
+                                        await session.send(input=chunk)
+                                        print("  ✅ Sent to Gemini")
 
-                                    # 3) Write to a temporary file
-                                    os.makedirs("./tmp", exist_ok=True)
-                                    # Sanitize filename to avoid path issues
-                                    safe_filename = filename.replace("/", "_").replace("\\", "_")
-                                    tmp_path = f"./tmp/{safe_filename}"
+                                    elif chunk["mime_type"] == "application/pdf":
+                                        filename = chunk["filename"]
+                                        use_ocr = chunk.get("ocr", False)
+                                        storage_path = chunk["storage_path"]  # Already uploaded from frontend
 
-                                    try:
-                                        with open(tmp_path, "wb") as f:
-                                            f.write(pdf_bytes)
-                                        print(f"  Saved to temporary file: {tmp_path}")
-
-                                        # 4) OCR or normal extract
-                                        print(f"  Extracting text...")
-                                        if use_ocr:
-                                            text = extract_text_with_ocr(tmp_path)
-                                        else:
-                                            text = extract_text_no_ocr(tmp_path)
-                                        
-                                        if not text or not text.strip():
-                                            raise Exception("No text extracted from PDF")
-                                        
-                                        print(f"  Extracted {len(text)} characters")
-
-                                        # 5) Store chunk embeddings
-                                        store_chunks_and_embeddings(user_id, filename, text)
-
-                                        # 6) Send success acknowledgment back to UI
-                                        await client_websocket.send(json.dumps({
-                                            "text": f"✅ '{filename}' uploaded & indexed successfully"
-                                        }))
-                                        print(f"✅ Successfully processed {filename}")
-
-                                    except Exception as e:
-                                        error_msg = f"Error processing PDF {filename}: {str(e)}"
-                                        print(f"❌ {error_msg}")
-                                        await client_websocket.send(json.dumps({
-                                            "text": f"❌ Error indexing '{filename}': {str(e)}"
-                                        }))
-                                    
-                                    finally:
-                                        # Clean up temporary file
-                                        if os.path.exists(tmp_path):
+                                        try:
+                                            print(f"📄 Processing PDF: {filename} (OCR: {use_ocr})")
+                                            
+                                            # 1) Download raw PDF bytes directly from Supabase
                                             try:
-                                                os.remove(tmp_path)
-                                            except:
-                                                pass
+                                                download_response = supabase.storage.from_("pdfs").download(storage_path)
+                                                
+                                                # Handle different response types from Supabase Python client
+                                                if isinstance(download_response, bytes):
+                                                    pdf_bytes = download_response
+                                                elif hasattr(download_response, 'data'):
+                                                    pdf_bytes = download_response.data
+                                                elif hasattr(download_response, 'content'):
+                                                    pdf_bytes = download_response.content
+                                                else:
+                                                    # Try to read as bytes if it's a file-like object
+                                                    pdf_bytes = download_response.read() if hasattr(download_response, 'read') else download_response
+                                                
+                                                if not pdf_bytes:
+                                                    raise Exception(f"Download returned empty data for {storage_path}")
+                                            except Exception as download_error:
+                                                raise Exception(f"Failed to download PDF from Supabase: {str(download_error)}")
+                                            
+                                            print(f"  Downloaded {len(pdf_bytes)} bytes")
 
-                                except Exception as e:
-                                    error_msg = f"Failed to process PDF {filename}: {str(e)}"
-                                    print(f"❌ {error_msg}")
-                                    import traceback
-                                    traceback.print_exc()
-                                    await client_websocket.send(json.dumps({
-                                        "text": f"❌ Error: {error_msg}"
-                                    }))
+                                            # 2) Insert metadata if not exists (avoid duplicates)
+                                            metadata_result = supabase.table("user_documents").upsert({
+                                                "user_id": user_id,
+                                                "filename": filename,
+                                                "original_path": storage_path
+                                            }, on_conflict="user_id,filename").execute()
+                                            print(f"  Metadata stored/updated")
+
+                                            # 3) Write to a temporary file
+                                            os.makedirs("./tmp", exist_ok=True)
+                                            # Sanitize filename to avoid path issues
+                                            safe_filename = filename.replace("/", "_").replace("\\", "_")
+                                            tmp_path = f"./tmp/{safe_filename}"
+
+                                            try:
+                                                with open(tmp_path, "wb") as f:
+                                                    f.write(pdf_bytes)
+                                                print(f"  Saved to temporary file: {tmp_path}")
+
+                                                # 4) OCR or normal extract
+                                                print(f"  Extracting text...")
+                                                if use_ocr:
+                                                    text = extract_text_with_ocr(tmp_path)
+                                                else:
+                                                    text = extract_text_no_ocr(tmp_path)
+                                                
+                                                if not text or not text.strip():
+                                                    raise Exception("No text extracted from PDF")
+                                                
+                                                print(f"  Extracted {len(text)} characters")
+
+                                                # 5) Store chunk embeddings
+                                                store_chunks_and_embeddings(user_id, filename, text)
+
+                                                # 6) Send success acknowledgment back to UI
+                                                await client_websocket.send(json.dumps({
+                                                    "text": f"✅ '{filename}' uploaded & indexed successfully"
+                                                }))
+                                                print(f"✅ Successfully processed {filename}")
+
+                                            except Exception as e:
+                                                error_msg = f"Error processing PDF {filename}: {str(e)}"
+                                                print(f"❌ {error_msg}")
+                                                await client_websocket.send(json.dumps({
+                                                    "text": f"❌ Error indexing '{filename}': {str(e)}"
+                                                }))
+                                            
+                                            finally:
+                                                # Clean up temporary file
+                                                if os.path.exists(tmp_path):
+                                                    try:
+                                                        os.remove(tmp_path)
+                                                    except:
+                                                        pass
+
+                                        except Exception as e:
+                                            error_msg = f"Failed to process PDF {filename}: {str(e)}"
+                                            print(f"❌ {error_msg}")
+                                            import traceback
+                                            traceback.print_exc()
+                                            await client_websocket.send(json.dumps({
+                                                "text": f"❌ Error: {error_msg}"
+                                            }))
+                        except Exception as e:
+                            print(f"❌ Error processing message: {e}")
+                            import traceback
+                            traceback.print_exc()
+                except Exception as e:
+                    print(f"❌ Error in send_to_gemini: {e}")
+                    import traceback
+                    traceback.print_exc()
 
 
 
@@ -445,11 +457,21 @@ async def gemini_session_handler(client_websocket):
                         if response.server_content:
                             for part in response.server_content.model_turn.parts:
                                 if hasattr(part, "text"):
+                                    print(f"💬 Gemini text response: {part.text[:100]}...")
                                     await client_websocket.send(json.dumps({"text": part.text}))
                                 elif hasattr(part, "inline_data"):
+                                    print(f"🔊 Gemini audio response ({len(part.inline_data.data)} bytes)")
                                     await client_websocket.send(json.dumps({
                                         "audio": base64.b64encode(part.inline_data.data).decode()
                                     }))
+                        except Exception as e:
+                            print(f"❌ Error processing response: {e}")
+                            import traceback
+                            traceback.print_exc()
+                except Exception as e:
+                    print(f"❌ Error in receive_from_gemini: {e}")
+                    import traceback
+                    traceback.print_exc()
 
 
             await asyncio.gather(
