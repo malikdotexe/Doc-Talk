@@ -136,29 +136,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
   }, []);
 
 
-  // Send PDF message
-  const sendPDFMessage = useCallback(
-    (base64PDF: string, filename: string, useOCR = false) => {
-      if (!webSocketRef.current) return;
-
-      const payload = {
-        realtime_input: {
-          media_chunks: [
-            {
-              mime_type: "application/pdf",
-              data: base64PDF,
-              filename,
-              ocr: useOCR,   
-            },
-          ],
-        },
-      };
-
-      webSocketRef.current.send(JSON.stringify(payload));
-      console.log("PDF uploaded:", filename, "OCR:", useOCR);
-    },
-    []
-  );
+ 
 
   // Send voice message
   const sendVoiceMessage = useCallback(
@@ -354,38 +332,65 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
   // Handle PDF upload
   const handlePdfUpload = useCallback(
     async (file: File, useOCR: boolean) => {
-      if (file.type !== 'application/pdf') {
-        alert('Please select a valid PDF file.');
+      if (file.type !== "application/pdf") {
+        alert("Please select a valid PDF file.");
         return;
       }
 
-      const reader = new FileReader();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        setPdfUrl(result);
+      if (!user) {
+        alert("Please login first.");
+        return;
+      }
 
-        // Convert to base64 and send
-        const base64Reader = new FileReader();
-        base64Reader.onload = function (e) {
-          try {
-            const base64Result = e.target?.result as string;
-            const base64PDF = base64Result.split(',')[1];
-            sendPDFMessage(base64PDF, file.name, useOCR);
-          } catch (err) {
-            console.error('error processing pdf file', err);
-          }
-        };
-        base64Reader.onerror = (err) => {
-          console.error('error reading pdf file', err);
-        };
-        base64Reader.readAsDataURL(file);
-      };
+      // 1) Upload PDF directly to Supabase Storage (no WebSocket transfer)
+      const storagePath = `${user.id}/${file.name}`;
 
-      reader.readAsDataURL(file);
+      const { error: uploadError } = await supabase.storage
+        .from("pdfs")
+        .upload(storagePath, file, {
+          upsert: true,
+          contentType: "application/pdf",
+        });
+
+      if (uploadError) {
+        console.error("Upload failed:", uploadError);
+        alert("Upload failed, retry.");
+        return;
+      }
+
+      // 2) Notify the backend over WebSocket (sending only metadata)
+      if (!webSocketRef.current) {
+        console.warn("WebSocket is not initialized");
+        return;
+      }
+
+      webSocketRef.current.send(
+        JSON.stringify({
+          realtime_input: {
+            media_chunks: [
+              {
+                mime_type: "application/pdf",
+                filename: file.name,
+                storage_path: storagePath,
+                ocr: useOCR,
+              },
+            ],
+          },
+        })
+      );
+
+      // 3) Display PDF in the UI preview pane
+      const url = URL.createObjectURL(file);
+      setPdfUrl(url);
+
     },
-    [sendPDFMessage]
+    []
   );
+
 
   // Initialize on mount
   useEffect(() => {

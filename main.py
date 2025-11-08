@@ -159,23 +159,22 @@ async def gemini_session_handler(client_websocket):
                                 await session.send(input=chunk)
 
                             elif chunk["mime_type"] == "application/pdf":
-                                pdf_bytes = base64.b64decode(chunk["data"])
-                                filename = chunk.get("filename", "file.pdf")
+                                filename = chunk["filename"]
                                 use_ocr = chunk.get("ocr", False)
+                                storage_path = chunk["storage_path"]  # Already uploaded from frontend
 
-                                storage_path = f"{user_id}/{filename}"
-                                supabase.storage.from_("pdfs").upload(
-                                    storage_path,
-                                    pdf_bytes,
-                                    file_options={"content-type": "application/pdf", "upsert": True}
-                                )
+                                # 1) Download raw PDF bytes directly from Supabase
+                                res = supabase.storage.from_("pdfs").download(storage_path)
+                                pdf_bytes = res  # Already raw bytes
 
-                                supabase.table("user_documents").insert({
+                                # 2) Insert metadata if not exists (avoid duplicates)
+                                supabase.table("user_documents").upsert({
                                     "user_id": user_id,
                                     "filename": filename,
                                     "original_path": storage_path
-                                }).execute()
+                                }, on_conflict="user_id,filename").execute()
 
+                                # 3) Write to a temporary file
                                 os.makedirs("./tmp", exist_ok=True)
                                 tmp_path = f"./tmp/{filename}"
 
@@ -183,17 +182,21 @@ async def gemini_session_handler(client_websocket):
                                     with open(tmp_path, "wb") as f:
                                         f.write(pdf_bytes)
 
+                                    # 4) OCR or normal extract
                                     text = extract_text_with_ocr(tmp_path) if use_ocr else extract_text_no_ocr(tmp_path)
 
+                                    # 5) Store chunk embeddings
                                     store_chunks_and_embeddings(user_id, filename, text)
 
                                 finally:
                                     if os.path.exists(tmp_path):
                                         os.remove(tmp_path)
 
+                                # 6) Send acknowledgment back to UI
                                 await client_websocket.send(json.dumps({
                                     "text": f"✅ '{filename}' uploaded & indexed"
                                 }))
+
 
 
             async def receive_from_gemini():
@@ -250,7 +253,12 @@ async def gemini_session_handler(client_websocket):
 
 async def main():
     PORT = int(os.environ.get("PORT", 9084))
-    async with websockets.serve(gemini_session_handler, "0.0.0.0", PORT):
+    async with websockets.serve(
+        gemini_session_handler,
+        "0.0.0.0",
+        PORT,
+        max_size=50 * 1024 * 1024  # 50MB
+    ):
         print("Running on port", PORT)
         await asyncio.Future()
 
