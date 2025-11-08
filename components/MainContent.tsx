@@ -1,4 +1,5 @@
 'use client';
+import UploadedDocuments from "@/components/UploadedDocuments";
 
 import { useEffect, useRef } from 'react';
 import { useAudioWebSocket } from '@/hooks/useAudioWebSocket';
@@ -28,10 +29,13 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       handlePdfUpload(file, useOCR);
     }
   };
-
   return (
     <main className="flex justify-center gap-10 py-16 px-16 flex-wrap">
-      {/* Left: PDF + Voice */}
+
+      {/* NEW LEFT SIDEBAR */}
+      <UploadedDocuments />
+
+      {/* Middle: PDF + Voice */}
       <div className="bg-white rounded-[20px] p-6 shadow-[0_6px_20px_rgba(0,0,0,0.08)] flex-1 min-w-[360px] max-w-[600px]">
         <div className="flex gap-2.5 mb-5">
           <button
@@ -53,6 +57,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
             Stop
           </button>
         </div>
+
         <input
           type="file"
           id="pdfInput"
@@ -62,6 +67,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           className="mt-5"
           style={{ display: 'none' }}
         />
+
         {pdfUrl && (
           <div className="mt-5">
             <embed
@@ -82,7 +88,9 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           className="h-[500px] overflow-y-auto border border-gray-300 rounded-xl p-4"
         >
           {messages.length === 0 && (
-            <p className="text-gray-500 text-center">No messages yet. Start talking to see responses here.</p>
+            <p className="text-gray-500 text-center">
+              No messages yet. Start talking to see responses here.
+            </p>
           )}
           {messages.map((message, index) => (
             <p key={index} className="mb-2">
@@ -91,6 +99,8 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           ))}
         </div>
       </div>
+
     </main>
   );
 }
+

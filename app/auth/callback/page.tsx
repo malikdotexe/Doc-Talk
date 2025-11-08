@@ -14,3 +14,4 @@ export default function AuthCallback() {
 
   return <p>Signing you in…</p>;
 }
+

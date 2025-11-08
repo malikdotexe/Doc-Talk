@@ -67,13 +67,6 @@ export default function Hero({ useOCR, setUseOCR }: { useOCR: boolean; setUseOCR
             </div>
 
             <button
-              onClick={handleStartClick}
-              className="bg-[#4a00e0] text-white py-3.5 px-6 rounded-lg hover:opacity-90 transition-opacity"
-            >
-              Start Talking
-            </button>
-
-            <button
               onClick={logout}
               className="bg-red-500 text-white py-3.5 px-6 rounded-lg hover:bg-red-600 transition"
             >

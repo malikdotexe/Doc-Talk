@@ -61,6 +61,25 @@ def store_chunks_and_embeddings(user_id, filename, text):
             "chunk": node.text,
             "embedding": embedding
         }).execute()
+def delete_document(user_id, filename):
+    # 1. Delete embedding chunks
+    supabase.table("document_chunks").delete().match({
+        "user_id": user_id,
+        "filename": filename
+    }).execute()
+
+    # 2. Delete metadata
+    supabase.table("user_documents").delete().match({
+        "user_id": user_id,
+        "filename": filename
+    }).execute()
+
+    # 3. Delete the file from Storage
+    storage_path = f"{user_id}/{filename}"
+    supabase.storage.from_("pdfs").remove([storage_path])
+
+    print(f"🗑️ Deleted document {filename} for {user_id}")
+    return f"Deleted {filename}"
 
 # === Query ===
 def query_docs(query, user_id):
@@ -100,6 +119,22 @@ tool_query_docs = {
         }
     ]
 }
+tool_delete_doc = {
+    "function_declarations": [
+        {
+            "name": "delete_document",
+            "description": "Delete a document and its embeddings",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "filename": {"type": "STRING"}
+                },
+                "required": ["filename"]
+            }
+        }
+    ]
+}
+
 
 
 async def gemini_session_handler(client_websocket):
@@ -109,7 +144,7 @@ async def gemini_session_handler(client_websocket):
         user_id = config["user_id"]  # REQUIRED
 
         config["system_instruction"] = "You MUST use query_docs for all answers."
-        config["tools"] = [tool_query_docs]
+        config["tools"] = [tool_query_docs, tool_delete_doc]
 
         async with client.aio.live.connect(model=MODEL, config=config) as session:
             print("Connected")
@@ -163,15 +198,37 @@ async def gemini_session_handler(client_websocket):
 
             async def receive_from_gemini():
                 async for response in session.receive():
+
                     if response.tool_call:
                         calls = response.tool_call.function_calls
                         results = []
+
                         for call in calls:
-                            result = query_docs(call.args["query"], user_id)
-                            results.append({"name": call.name, "response": {"result": result}, "id": call.id})
+                            fn = call.name
+                            args = call.args
+
+                            # Handle query_docs
+                            if fn == "query_docs":
+                                result = query_docs(args["query"], user_id)
+
+                            # Handle delete_document
+                            elif fn == "delete_document":
+                                result = delete_document(user_id, args["filename"])
+
+                            else:
+                                result = f"Unknown tool call: {fn}"
+
+                            results.append({
+                                "name": fn,
+                                "response": {"result": result},
+                                "id": call.id
+                            })
+
+                        # Return tool results to Gemini model
                         await session.send(input=results)
                         continue
 
+                    # ======= HANDLE MODEL OUTPUT (unchanged) =======
                     if response.server_content:
                         for part in response.server_content.model_turn.parts:
                             if hasattr(part, "text"):
@@ -180,6 +237,7 @@ async def gemini_session_handler(client_websocket):
                                 await client_websocket.send(json.dumps({
                                     "audio": base64.b64encode(part.inline_data.data).decode()
                                 }))
+
 
             await asyncio.gather(
                 asyncio.create_task(send_to_gemini()),
