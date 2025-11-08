@@ -436,15 +436,29 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
         })
       );
 
-      // 3) Display PDF in the UI preview pane
+      // 3) Listen for success response to trigger document refresh
+      const originalOnMessage = webSocketRef.current.onmessage;
+      webSocketRef.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.text && (data.text.includes("successfully") || data.text.includes("✅"))) {
+            // Trigger document list refresh
+            window.dispatchEvent(new CustomEvent('documentUploaded'));
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+        // Call original handler
+        if (originalOnMessage && webSocketRef.current) originalOnMessage.call(webSocketRef.current, event);
+      };
+
+      // 4) Display PDF in the UI preview pane
       const url = URL.createObjectURL(file);
       setPdfUrl(url);
 
     },
     []
   );
-
-
   // Initialize on mount
   useEffect(() => {
     initializeAudioContext();

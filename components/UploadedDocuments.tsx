@@ -166,6 +166,12 @@ export default function UploadedDocuments({ onDelete, webSocket }: UploadedDocum
 
   useEffect(() => {
     loadDocs();
+    const handleDocumentUpload = () => loadDocs();
+    window.addEventListener('documentUploaded', handleDocumentUpload);
+    
+    return () => {
+      window.removeEventListener('documentUploaded', handleDocumentUpload);
+    };
   }, []);
 
   return (
