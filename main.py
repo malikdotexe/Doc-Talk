@@ -32,76 +32,195 @@ llm = Gemini(api_key=gemini_api_key, model_name="models/gemini-2.0-flash-exp")
 
 client = genai.Client(http_options={ 'api_version': 'v1alpha' })
 
+# Verify embedding dimension on startup
+def verify_embedding_dimension():
+    """Check and print the embedding dimension to ensure database compatibility."""
+    try:
+        test_embedding = gemini_embedding_model.get_text_embedding("test")
+        dimension = len(test_embedding)
+        print(f"✅ Embedding dimension: {dimension} (ensure your Supabase vector column matches this)")
+        return dimension
+    except Exception as e:
+        print(f"⚠️ Warning: Could not verify embedding dimension: {e}")
+        return None
+
+# Verify on module load
+EMBEDDING_DIMENSION = verify_embedding_dimension()
+
 # === Text Extraction ===
 def extract_text_no_ocr(path):
-    doc = fitz.open(path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+    """Extract text from PDF using PyMuPDF (fitz) - works for text-based PDFs."""
+    try:
+        doc = fitz.open(path)
+        text = ""
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception as e:
+        print(f"Error extracting text without OCR: {e}")
+        raise
 
 def extract_text_with_ocr(path):
-    with open(path, "rb") as f:
-        content = f.read()
-    image = vision.Image(content=content)
-    response = vision_client.document_text_detection(image=image)
-    return response.full_text_annotation.text
+    """Extract text from PDF using OCR - converts PDF pages to images first."""
+    try:
+        doc = fitz.open(path)
+        full_text = ""
+        
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            
+            # Convert PDF page to image (PNG)
+            # Use a higher zoom factor for better OCR accuracy
+            zoom = 2.0
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            img_bytes = pix.tobytes("png")
+            
+            # Use Google Cloud Vision to extract text from image
+            image = vision.Image(content=img_bytes)
+            response = vision_client.document_text_detection(image=image)
+            
+            if response.full_text_annotation:
+                full_text += response.full_text_annotation.text + "\n"
+            else:
+                # Fallback to regular text extraction if OCR fails
+                full_text += page.get_text() + "\n"
+        
+        doc.close()
+        return full_text
+    except Exception as e:
+        print(f"Error extracting text with OCR: {e}")
+        # Fallback to non-OCR extraction if OCR fails
+        print("Falling back to non-OCR text extraction...")
+        return extract_text_no_ocr(path)
 
 # === Chunk + Embedding Storage ===
 
 def store_chunks_and_embeddings(user_id, filename, text):
-    doc = Document(text=text)
-    nodes = parser.get_nodes_from_documents([doc])
+    """Chunk text and store embeddings in Supabase."""
+    try:
+        if not text or not text.strip():
+            print(f"Warning: Empty text extracted from {filename}")
+            return
+        
+        doc = Document(text=text)
+        nodes = parser.get_nodes_from_documents([doc])
+        
+        if not nodes:
+            print(f"Warning: No chunks created from {filename}")
+            return
 
-    for node in nodes:
-        embedding = gemini_embedding_model.get_text_embedding(node.text)
-        supabase.table("document_chunks").insert({
+        print(f"Processing {len(nodes)} chunks for {filename}...")
+        
+        # Delete existing chunks for this document first (in case of re-indexing)
+        supabase.table("document_chunks").delete().match({
             "user_id": user_id,
-            "filename": filename,
-            "chunk": node.text,
-            "embedding": embedding
+            "filename": filename
         }).execute()
+        
+        for i, node in enumerate(nodes):
+            try:
+                # Generate embedding
+                embedding = gemini_embedding_model.get_text_embedding(node.text)
+                
+                # Insert chunk with embedding
+                result = supabase.table("document_chunks").insert({
+                    "user_id": user_id,
+                    "filename": filename,
+                    "chunk": node.text,
+                    "embedding": embedding
+                }).execute()
+                
+                if i % 10 == 0:
+                    print(f"  Stored {i+1}/{len(nodes)} chunks...")
+                    
+            except Exception as e:
+                print(f"Error storing chunk {i} for {filename}: {e}")
+                continue
+        
+        print(f"✅ Successfully indexed {len(nodes)} chunks for {filename}")
+        
+    except Exception as e:
+        print(f"Error in store_chunks_and_embeddings for {filename}: {e}")
+        raise
+
 def delete_document(user_id, filename):
-    # 1. Delete embedding chunks
-    supabase.table("document_chunks").delete().match({
-        "user_id": user_id,
-        "filename": filename
-    }).execute()
+    """Delete a document and all its associated data."""
+    try:
+        print(f"🗑️ Deleting document {filename} for user {user_id}")
+        
+        # 1. Delete embedding chunks
+        chunks_result = supabase.table("document_chunks").delete().match({
+            "user_id": user_id,
+            "filename": filename
+        }).execute()
+        print(f"  Deleted chunks: {len(chunks_result.data) if chunks_result.data else 0}")
 
-    # 2. Delete metadata
-    supabase.table("user_documents").delete().match({
-        "user_id": user_id,
-        "filename": filename
-    }).execute()
+        # 2. Delete metadata
+        metadata_result = supabase.table("user_documents").delete().match({
+            "user_id": user_id,
+            "filename": filename
+        }).execute()
+        print(f"  Deleted metadata")
 
-    # 3. Delete the file from Storage
-    storage_path = f"{user_id}/{filename}"
-    supabase.storage.from_("pdfs").remove([storage_path])
+        # 3. Delete the file from Storage
+        storage_path = f"{user_id}/{filename}"
+        storage_result = supabase.storage.from_("pdfs").remove([storage_path])
+        print(f"  Deleted file from storage")
 
-    print(f"🗑️ Deleted document {filename} for {user_id}")
-    return f"Deleted {filename}"
+        print(f"✅ Successfully deleted {filename}")
+        return f"Deleted {filename}"
+        
+    except Exception as e:
+        error_msg = f"Error deleting document {filename}: {str(e)}"
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return error_msg
 
 # === Query ===
 def query_docs(query, user_id):
-    query_embedding = gemini_embedding_model.get_text_embedding(query)
+    """Query document chunks using vector similarity search."""
+    try:
+        print(f"🔍 Querying documents for user {user_id}: {query}")
+        
+        # Generate query embedding
+        query_embedding = gemini_embedding_model.get_text_embedding(query)
+        print(f"  Generated query embedding (dim: {len(query_embedding)})")
 
-    response = supabase.rpc(
-        "match_document_chunks",
-        {
-            "query_embedding": query_embedding,
-            "match_user_id": user_id,
-            "match_count": 5
-        }
-    ).execute()
+        # Call Supabase RPC function for vector similarity search
+        response = supabase.rpc(
+            "match_document_chunks",
+            {
+                "query_embedding": query_embedding,
+                "match_user_id": user_id,
+                "match_count": 5
+            }
+        ).execute()
 
-    chunks = [row["chunk"] for row in response.data]
-    context = "\n\n".join(chunks)
+        if not response.data:
+            return "No relevant documents found. Please upload and index documents first."
 
-    answer = llm.complete(
-        f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
-    )
+        chunks = [row["chunk"] for row in response.data]
+        context = "\n\n".join(chunks)
+        
+        print(f"  Found {len(chunks)} relevant chunks")
 
-    return str(answer)
+        # Generate answer using LLM
+        answer = llm.complete(
+            f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
+        )
+
+        return str(answer)
+        
+    except Exception as e:
+        error_msg = f"Error querying documents: {str(e)}"
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return f"Error: {error_msg}. Make sure the 'match_document_chunks' function exists in your Supabase database."
 
 
 tool_query_docs = {
@@ -163,39 +282,94 @@ async def gemini_session_handler(client_websocket):
                                 use_ocr = chunk.get("ocr", False)
                                 storage_path = chunk["storage_path"]  # Already uploaded from frontend
 
-                                # 1) Download raw PDF bytes directly from Supabase
-                                res = supabase.storage.from_("pdfs").download(storage_path)
-                                pdf_bytes = res  # Already raw bytes
-
-                                # 2) Insert metadata if not exists (avoid duplicates)
-                                supabase.table("user_documents").upsert({
-                                    "user_id": user_id,
-                                    "filename": filename,
-                                    "original_path": storage_path
-                                }, on_conflict="user_id,filename").execute()
-
-                                # 3) Write to a temporary file
-                                os.makedirs("./tmp", exist_ok=True)
-                                tmp_path = f"./tmp/{filename}"
-
                                 try:
-                                    with open(tmp_path, "wb") as f:
-                                        f.write(pdf_bytes)
+                                    print(f"📄 Processing PDF: {filename} (OCR: {use_ocr})")
+                                    
+                                    # 1) Download raw PDF bytes directly from Supabase
+                                    try:
+                                        download_response = supabase.storage.from_("pdfs").download(storage_path)
+                                        
+                                        # Handle different response types from Supabase Python client
+                                        if isinstance(download_response, bytes):
+                                            pdf_bytes = download_response
+                                        elif hasattr(download_response, 'data'):
+                                            pdf_bytes = download_response.data
+                                        elif hasattr(download_response, 'content'):
+                                            pdf_bytes = download_response.content
+                                        else:
+                                            # Try to read as bytes if it's a file-like object
+                                            pdf_bytes = download_response.read() if hasattr(download_response, 'read') else download_response
+                                        
+                                        if not pdf_bytes:
+                                            raise Exception(f"Download returned empty data for {storage_path}")
+                                    except Exception as download_error:
+                                        raise Exception(f"Failed to download PDF from Supabase: {str(download_error)}")
+                                    
+                                    print(f"  Downloaded {len(pdf_bytes)} bytes")
 
-                                    # 4) OCR or normal extract
-                                    text = extract_text_with_ocr(tmp_path) if use_ocr else extract_text_no_ocr(tmp_path)
+                                    # 2) Insert metadata if not exists (avoid duplicates)
+                                    metadata_result = supabase.table("user_documents").upsert({
+                                        "user_id": user_id,
+                                        "filename": filename,
+                                        "original_path": storage_path
+                                    }, on_conflict="user_id,filename").execute()
+                                    print(f"  Metadata stored/updated")
 
-                                    # 5) Store chunk embeddings
-                                    store_chunks_and_embeddings(user_id, filename, text)
+                                    # 3) Write to a temporary file
+                                    os.makedirs("./tmp", exist_ok=True)
+                                    # Sanitize filename to avoid path issues
+                                    safe_filename = filename.replace("/", "_").replace("\\", "_")
+                                    tmp_path = f"./tmp/{safe_filename}"
 
-                                finally:
-                                    if os.path.exists(tmp_path):
-                                        os.remove(tmp_path)
+                                    try:
+                                        with open(tmp_path, "wb") as f:
+                                            f.write(pdf_bytes)
+                                        print(f"  Saved to temporary file: {tmp_path}")
 
-                                # 6) Send acknowledgment back to UI
-                                await client_websocket.send(json.dumps({
-                                    "text": f"✅ '{filename}' uploaded & indexed"
-                                }))
+                                        # 4) OCR or normal extract
+                                        print(f"  Extracting text...")
+                                        if use_ocr:
+                                            text = extract_text_with_ocr(tmp_path)
+                                        else:
+                                            text = extract_text_no_ocr(tmp_path)
+                                        
+                                        if not text or not text.strip():
+                                            raise Exception("No text extracted from PDF")
+                                        
+                                        print(f"  Extracted {len(text)} characters")
+
+                                        # 5) Store chunk embeddings
+                                        store_chunks_and_embeddings(user_id, filename, text)
+
+                                        # 6) Send success acknowledgment back to UI
+                                        await client_websocket.send(json.dumps({
+                                            "text": f"✅ '{filename}' uploaded & indexed successfully"
+                                        }))
+                                        print(f"✅ Successfully processed {filename}")
+
+                                    except Exception as e:
+                                        error_msg = f"Error processing PDF {filename}: {str(e)}"
+                                        print(f"❌ {error_msg}")
+                                        await client_websocket.send(json.dumps({
+                                            "text": f"❌ Error indexing '{filename}': {str(e)}"
+                                        }))
+                                    
+                                    finally:
+                                        # Clean up temporary file
+                                        if os.path.exists(tmp_path):
+                                            try:
+                                                os.remove(tmp_path)
+                                            except:
+                                                pass
+
+                                except Exception as e:
+                                    error_msg = f"Failed to process PDF {filename}: {str(e)}"
+                                    print(f"❌ {error_msg}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    await client_websocket.send(json.dumps({
+                                        "text": f"❌ Error: {error_msg}"
+                                    }))
 
 
 
