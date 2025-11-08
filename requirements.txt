@@ -5,3 +5,4 @@ llama-index-embeddings-gemini==0.3.1
 websockets
 python-dotenv
 google-cloud-vision
+supabase
