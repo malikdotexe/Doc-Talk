@@ -272,8 +272,44 @@ async def gemini_session_handler(client_websocket):
                 async for message in client_websocket:
                     data = json.loads(message)
 
+                    # Handle direct tool_call from client (e.g., delete_document)
+                    if "realtime_input" in data and "tool_call" in data["realtime_input"]:
+                        tool_call_data = data["realtime_input"]["tool_call"]
+                        if "function_calls" in tool_call_data:
+                            for call in tool_call_data["function_calls"]:
+                                fn = call.get("name")
+                                args = call.get("args", {})
+                                
+                                try:
+                                    # Handle delete_document directly
+                                    if fn == "delete_document":
+                                        result = delete_document(user_id, args.get("filename", ""))
+                                        # Send confirmation back to client
+                                        await client_websocket.send(json.dumps({
+                                            "text": f"✅ {result}"
+                                        }))
+                                    # Handle query_docs directly if needed
+                                    elif fn == "query_docs":
+                                        result = query_docs(args.get("query", ""), user_id)
+                                        await client_websocket.send(json.dumps({
+                                            "text": f"🔍 {result}"
+                                        }))
+                                    else:
+                                        await client_websocket.send(json.dumps({
+                                            "text": f"❌ Unknown function: {fn}"
+                                        }))
+                                except Exception as e:
+                                    error_msg = f"Error executing {fn}: {str(e)}"
+                                    print(f"❌ {error_msg}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    await client_websocket.send(json.dumps({
+                                        "text": f"❌ {error_msg}"
+                                    }))
+                        continue
+
                     if "realtime_input" in data:
-                        for chunk in data["realtime_input"]["media_chunks"]:
+                        for chunk in data["realtime_input"].get("media_chunks", []):
                             if chunk["mime_type"] == "audio/pcm":
                                 await session.send(input=chunk)
 

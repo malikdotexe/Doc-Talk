@@ -15,6 +15,7 @@ interface UseAudioWebSocketReturn {
   isConnected: boolean;
   messages: string[];
   pdfUrl: string | null;
+  webSocket: WebSocket | null;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   handlePdfUpload: (file: File, useOCR: boolean) => Promise<void>;
@@ -189,6 +190,23 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
   // Connect WebSocket with retry
   const connectWithRetry = useCallback(
     (retries = 5, delay = 2000) => {
+      // Don't create a new connection if one already exists and is connecting/open
+      if (webSocketRef.current && 
+          (webSocketRef.current.readyState === WebSocket.CONNECTING || 
+           webSocketRef.current.readyState === WebSocket.OPEN)) {
+        console.log('WebSocket already connected or connecting');
+        return;
+      }
+
+      // Close existing connection if it's in a bad state
+      if (webSocketRef.current && webSocketRef.current.readyState !== WebSocket.CLOSED) {
+        try {
+          webSocketRef.current.close();
+        } catch (e) {
+          // Ignore errors when closing
+        }
+      }
+
       console.log('Connecting to backend…');
       const ws = new WebSocket(WS_URL);
 
@@ -198,19 +216,22 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
         sendInitialSetupMessage();
       };
 
-      ws.onclose = () => {
-        console.warn('WebSocket closed.');
+      ws.onclose = (event) => {
+        console.warn('WebSocket closed.', event.code, event.reason);
         setIsConnected(false);
-        if (retries > 0) {
+        
+        // Only retry if it wasn't a normal closure and we have retries left
+        if (event.code !== 1000 && retries > 0) {
           console.log(`Retrying in ${delay / 1000}s… (${retries} left)`);
           setTimeout(() => connectWithRetry(retries - 1, delay * 2), delay);
-        } else {
-          alert('Unable to connect. Please refresh.');
+        } else if (retries === 0) {
+          console.error('Unable to connect after retries. Please refresh.');
         }
       };
 
       ws.onerror = (err) => {
         console.error('WebSocket error:', err);
+        setIsConnected(false);
       };
 
       ws.onmessage = receiveMessage;
@@ -414,6 +435,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
     isConnected,
     messages,
     pdfUrl,
+    webSocket: webSocketRef.current,
     startRecording,
     stopRecording,
     handlePdfUpload,

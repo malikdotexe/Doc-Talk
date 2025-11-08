@@ -9,6 +9,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     isRecording,
     messages,
     pdfUrl,
+    webSocket,
     startRecording,
     stopRecording,
     handlePdfUpload,
@@ -33,7 +34,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     <main className="flex justify-center gap-10 py-16 px-16 flex-wrap">
 
       {/* NEW LEFT SIDEBAR */}
-      <UploadedDocuments />
+      <UploadedDocuments webSocket={webSocket} />
 
       {/* Middle: PDF + Voice */}
       <div className="bg-white rounded-[20px] p-6 shadow-[0_6px_20px_rgba(0,0,0,0.08)] flex-1 min-w-[360px] max-w-[600px]">
