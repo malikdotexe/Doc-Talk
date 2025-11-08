@@ -314,7 +314,10 @@ async def gemini_session_handler(client_websocket):
                                 for chunk in data["realtime_input"].get("media_chunks", []):
                                     if chunk["mime_type"] == "audio/pcm":
                                         print(f"🎤 Received audio chunk ({len(chunk.get('data', ''))} bytes)")
-                                        await session.send(input=chunk)
+                                        await session.send(input={
+                                            "mime_type": "audio/pcm",
+                                            "data": chunk["data"]
+                                        })
                                         print("  ✅ Sent to Gemini")
 
                                     elif chunk["mime_type"] == "application/pdf":
@@ -420,51 +423,80 @@ async def gemini_session_handler(client_websocket):
                     traceback.print_exc()
 
 
-
             async def receive_from_gemini():
                 try:
                     async for response in session.receive():
                         try:
-                            if response.tool_call:
-                                calls = response.tool_call.function_calls
-                                results = []
+                            if response.server_content is None:
+                                if response.tool_call is not None:
+                                    #handle the tool call
+                                    print(f"Tool call received: {response.tool_call}")
 
-                                for call in calls:
-                                    fn = call.name
-                                    args = call.args
+                                    function_calls = response.tool_call.function_calls
+                                    function_responses = []
 
-                                    # Handle query_docs
-                                    if fn == "query_docs":
-                                        result = query_docs(args["query"], user_id)
+                                    for function_call in function_calls:
+                                        name = function_call.name
+                                        args = function_call.args
+                                        # Extract the numeric part from Gemini's function call ID
+                                        call_id = function_call.id
 
-                                    # Handle delete_document
-                                    elif fn == "delete_document":
-                                        result = delete_document(user_id, args["filename"])
+                                        # Validate function name
+                                        if name == "query_docs":
+                                            try:
+                                                result = query_docs(args["query"], user_id)
+                                                function_responses.append(
+                                                    {
+                                                        "name": name,
+                                                        "response": {"result": result},
+                                                        "id": call_id  
+                                                    }
+                                                ) 
+                                                await client_websocket.send(json.dumps({"text": json.dumps(function_responses)}))
+                                                print("Function executed")
+                                            except Exception as e:
+                                                print(f"Error executing function: {e}")
+                                                continue
 
-                                    else:
-                                        result = f"Unknown tool call: {fn}"
+                                        elif name == "delete_document":
+                                            try:
+                                                result = delete_document(user_id, args["filename"])
+                                                function_responses.append(
+                                                    {
+                                                        "name": name,
+                                                        "response": {"result": result},
+                                                        "id": call_id  
+                                                    }
+                                                )
+                                                await client_websocket.send(json.dumps({"text": json.dumps(function_responses)}))
+                                                print("Function executed")
+                                            except Exception as e:
+                                                print(f"Error executing function: {e}")
+                                                continue
 
-                                    results.append({
-                                        "name": fn,
-                                        "response": {"result": result},
-                                        "id": call.id
-                                    })
-
-                                # Return tool results to Gemini model
-                                await session.send(input=results)
-                                continue
+                                    # Send function response back to Gemini
+                                    print(f"function_responses: {function_responses}")
+                                    await session.send(input=function_responses)
+                                    continue
 
                             # ======= HANDLE MODEL OUTPUT =======
-                            if response.server_content:
-                                for part in response.server_content.model_turn.parts:
-                                    if hasattr(part, "text"):
+                            model_turn = response.server_content.model_turn
+                            if model_turn:
+                                for part in model_turn.parts:
+                                    if hasattr(part, "text") and part.text is not None:
                                         print(f"💬 Gemini text response: {part.text[:100]}...")
                                         await client_websocket.send(json.dumps({"text": part.text}))
-                                    elif hasattr(part, "inline_data"):
+                                    elif hasattr(part, "inline_data") and part.inline_data is not None:
                                         print(f"🔊 Gemini audio response ({len(part.inline_data.data)} bytes)")
+                                        base64_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
                                         await client_websocket.send(json.dumps({
-                                            "audio": base64.b64encode(part.inline_data.data).decode()
+                                            "audio": base64_audio,
                                         }))
+                                        print("audio received")
+
+                            if response.server_content.turn_complete:
+                                print('\n<Turn complete>')
+
                         except Exception as e:
                             print(f"❌ Error processing response: {e}")
                             import traceback
@@ -473,6 +505,7 @@ async def gemini_session_handler(client_websocket):
                     print(f"❌ Error in receive_from_gemini: {e}")
                     import traceback
                     traceback.print_exc()
+
 
 
             await asyncio.gather(
