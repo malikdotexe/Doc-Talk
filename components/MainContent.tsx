@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { useAudioWebSocket } from '@/hooks/useAudioWebSocket';
 
-export default function MainContent() {
+export default function MainContent({ useOCR }: { useOCR: boolean }){
   const {
     isRecording,
     messages,
@@ -25,7 +25,7 @@ export default function MainContent() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      handlePdfUpload(file);
+      handlePdfUpload(file, useOCR);
     }
   };
 

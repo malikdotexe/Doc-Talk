@@ -1,6 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'wss://doc-talk-u97i.onrender.com';
 
@@ -11,7 +17,7 @@ interface UseAudioWebSocketReturn {
   pdfUrl: string | null;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
-  handlePdfUpload: (file: File) => Promise<void>;
+  handlePdfUpload: (file: File, useOCR: boolean) => Promise<void>;
   displayMessage: (message: string) => void;
 }
 
@@ -108,44 +114,48 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
   );
 
   // Send initial setup message
-  const sendInitialSetupMessage = useCallback(() => {
+  const sendInitialSetupMessage = useCallback(async () => {
     if (!webSocketRef.current) return;
+
+    // get logged-in user
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      console.warn("No user logged in — PDF + chat indexing will NOT work.");
+      return;
+    }
 
     const setupClientMessage = {
       setup: {
-        generation_config: { response_modalities: ['AUDIO'] },
+        user_id: user.id,        // IMPORTANT
+        generation_config: { response_modalities: ["AUDIO"] },
       },
     };
 
     webSocketRef.current.send(JSON.stringify(setupClientMessage));
+    console.log("Sent user_id to backend:", user.id);
   }, []);
+
 
   // Send PDF message
   const sendPDFMessage = useCallback(
-    (base64PDF: string, filename: string) => {
-      if (!webSocketRef.current) {
-        console.log('websocket not initialized');
-        return;
-      }
+    (base64PDF: string, filename: string, useOCR = false) => {
+      if (!webSocketRef.current) return;
 
-      try {
-        const payload = {
-          realtime_input: {
-            media_chunks: [
-              {
-                mime_type: 'application/pdf',
-                data: base64PDF,
-                filename: filename,
-              },
-            ],
-          },
-        };
+      const payload = {
+        realtime_input: {
+          media_chunks: [
+            {
+              mime_type: "application/pdf",
+              data: base64PDF,
+              filename,
+              ocr: useOCR,   
+            },
+          ],
+        },
+      };
 
-        webSocketRef.current.send(JSON.stringify(payload));
-        console.log('PDF data sent immediately');
-      } catch (err) {
-        console.error('Error sending PDF message:', err);
-      }
+      webSocketRef.current.send(JSON.stringify(payload));
+      console.log("PDF uploaded:", filename, "OCR:", useOCR);
     },
     []
   );
@@ -343,7 +353,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
 
   // Handle PDF upload
   const handlePdfUpload = useCallback(
-    async (file: File) => {
+    async (file: File, useOCR: boolean) => {
       if (file.type !== 'application/pdf') {
         alert('Please select a valid PDF file.');
         return;
@@ -361,7 +371,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
           try {
             const base64Result = e.target?.result as string;
             const base64PDF = base64Result.split(',')[1];
-            sendPDFMessage(base64PDF, file.name);
+            sendPDFMessage(base64PDF, file.name, useOCR);
           } catch (err) {
             console.error('error processing pdf file', err);
           }
