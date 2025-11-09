@@ -34,20 +34,24 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   }, [messages]);
 
-  // NEW: Track Gemini speaking state
+  // IMPROVED: Better Gemini speaking state tracking using turnComplete flag
   useEffect(() => {
     const handleWebSocketMessage = (event: MessageEvent) => {
       try {
         const messageData = JSON.parse(event.data);
+        
+        // Start speaking when audio data is received
         if (messageData.audio) {
           setIsGeminiSpeaking(true);
           setCurrentStatus('speaking');
-          // Reset speaking state after audio playback (assuming ~3-5 seconds)
-          setTimeout(() => {
-            setIsGeminiSpeaking(false);
-            setCurrentStatus('idle');
-          }, 4000);
         }
+        
+        // Check for turnComplete to know when Gemini finishes speaking
+        if (messageData.serverContent && messageData.serverContent.turnComplete) {
+          setIsGeminiSpeaking(false);
+          setCurrentStatus('idle');
+        }
+        
       } catch (err) {
         console.error('Error parsing WebSocket message:', err);
       }
@@ -260,7 +264,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   </div>
                   <h3 className="text-xl font-semibold text-gray-700 mb-2">No Document Selected</h3>
                   <p className="text-gray-500 mb-6 max-w-md">
-                    Choose a document from the sidebar to preview it or upload a new PDF.
+                    Choose a document from the sidebar or upload a new PDF to start asking questions about it.
                   </p>
                   <button
                     onClick={() => pdfInputRef.current?.click()}
@@ -297,5 +301,4 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   );
 }
 
-// NEW: Import supabase for PDF downloading
 import { supabase } from "@/lib/supabaseClient";

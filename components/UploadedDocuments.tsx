@@ -177,23 +177,23 @@ export default function UploadedDocuments({ onDelete, onSelect, selectedPdf, web
   }, []);
 
   return (
-    <aside className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-xl border border-white/20 h-fit">
+    <aside className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 h-fit">
       <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+        <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center">
           <i className="material-icons text-white text-lg">folder</i>
         </div>
-        <h3 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+        <h3 className="text-xl font-bold text-gray-900">
           Your Documents
         </h3>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
         </div>
       ) : documents.length === 0 ? (
         <div className="text-center py-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <i className="material-icons text-gray-400 text-2xl">description</i>
           </div>
           <p className="text-gray-500 text-sm font-medium">No documents yet</p>
@@ -207,15 +207,15 @@ export default function UploadedDocuments({ onDelete, onSelect, selectedPdf, web
               onClick={() => onSelect?.(filename)}
               className={`group relative p-4 rounded-xl border transition-all duration-300 cursor-pointer ${
                 selectedPdf === filename 
-                  ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-300 shadow-md' 
-                  : 'bg-gray-50/50 border-gray-200 hover:bg-white hover:border-indigo-200 hover:shadow-md'
+                  ? 'bg-gray-50 border-gray-900 shadow-md' 
+                  : 'bg-gray-50/50 border-gray-200 hover:bg-white hover:border-gray-300 hover:shadow-md'
               }`}
             >
               <div className="flex items-start gap-3">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
                   selectedPdf === filename 
-                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600' 
-                    : 'bg-gradient-to-br from-gray-200 to-gray-300 group-hover:from-indigo-100 group-hover:to-purple-100'
+                    ? 'bg-gray-900' 
+                    : 'bg-gray-200 group-hover:bg-gray-300'
                 }`}>
                   <i className={`material-icons text-sm ${
                     selectedPdf === filename ? 'text-white' : 'text-gray-600'
@@ -224,7 +224,7 @@ export default function UploadedDocuments({ onDelete, onSelect, selectedPdf, web
                 
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm font-medium truncate ${
-                    selectedPdf === filename ? 'text-indigo-900' : 'text-gray-700'
+                    selectedPdf === filename ? 'text-gray-900' : 'text-gray-700'
                   }`}>
                     {filename}
                   </p>
