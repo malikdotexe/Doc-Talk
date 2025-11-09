@@ -15,6 +15,7 @@ interface UseAudioWebSocketReturn {
   isConnected: boolean;
   messages: string[];
   pdfUrl: string | null;
+  setPdfUrl: (url: string | null) => void;
   webSocket: WebSocket | null;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
@@ -481,6 +482,7 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
     isConnected,
     messages,
     pdfUrl,
+    setPdfUrl,
     webSocket: webSocketRef.current,
     startRecording,
     stopRecording,

@@ -4,11 +4,13 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 interface UploadedDocumentsProps {
-  onDelete?: (filename: string) => void;   // optional callback for future use
-  webSocket?: WebSocket | null;  // Accept WebSocket from parent
+  onDelete?: (filename: string) => void;
+  onSelect?: (filename: string) => void;  // NEW: callback for selection
+  selectedPdf?: string | null;  // NEW: track which PDF is selected
+  webSocket?: WebSocket | null;
 }
 
-export default function UploadedDocuments({ onDelete, webSocket }: UploadedDocumentsProps) {
+export default function UploadedDocuments({ onDelete, onSelect, selectedPdf, webSocket }: UploadedDocumentsProps) {
   const [documents, setDocuments] = useState<{ filename: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -187,11 +189,19 @@ export default function UploadedDocuments({ onDelete, webSocket }: UploadedDocum
           {documents.map(({ filename }) => (
             <li
               key={filename}
-              className="flex justify-between items-center text-sm border-b pb-2"
+              onClick={() => onSelect?.(filename)}  // NEW: Handle PDF selection
+              className={`flex justify-between items-center text-sm border-b pb-2 cursor-pointer transition-colors ${
+                selectedPdf === filename 
+                  ? 'bg-gray-200 border-gray-400'  // NEW: Darkened background for selected PDF
+                  : 'hover:bg-gray-50'
+              }`}
             >
               <span className="truncate max-w-[120px]">{filename}</span>
               <button
-                onClick={() => deleteDoc(filename)}
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent triggering selection when clicking delete
+                  deleteDoc(filename);
+                }}
                 disabled={deleting === filename}
                 className="text-red-500 hover:underline text-xs disabled:opacity-50 disabled:cursor-not-allowed"
               >
