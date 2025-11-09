@@ -260,7 +260,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   </div>
                   <h3 className="text-xl font-semibold text-gray-700 mb-2">No Document Selected</h3>
                   <p className="text-gray-500 mb-6 max-w-md">
-                    Choose a document from the sidebar or upload a new PDF to start asking questions about it.
+                    Choose a document from the sidebar to preview it or upload a new PDF.
                   </p>
                   <button
                     onClick={() => pdfInputRef.current?.click()}
