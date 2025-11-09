@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import websockets
-from google import genai
 import base64
 from dotenv import load_dotenv
 
@@ -18,7 +17,7 @@ from llama_index.core import Document
 load_dotenv()
 
 # === Environment ===
-MODEL = "gemini-2.0-flash-exp"
+MODEL = "models/gemini-2.0-flash-exp"
 gemini_api_key = os.getenv('GOOGLE_API_KEY')
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -30,32 +29,24 @@ parser = SimpleNodeParser(chunk_size=500)
 gemini_embedding_model = GeminiEmbedding(api_key=gemini_api_key, model_name="models/text-embedding-004")
 llm = Gemini(api_key=gemini_api_key, model_name="models/gemini-2.0-flash-exp")
 
-client = genai.Client(http_options={ 'api_version': 'v1alpha' })
-
 # Verify embedding dimension on startup
 def verify_embedding_dimension():
-    """Check and print the embedding dimension to ensure database compatibility."""
     try:
         test_embedding = gemini_embedding_model.get_text_embedding("test")
         dimension = len(test_embedding)
-        print(f"✅ Embedding dimension: {dimension} (ensure your Supabase vector column matches this)")
+        print(f"✅ Embedding dimension: {dimension}")
         return dimension
     except Exception as e:
         print(f"⚠️ Warning: Could not verify embedding dimension: {e}")
         return None
 
-# Verify on module load
 EMBEDDING_DIMENSION = verify_embedding_dimension()
 
-# === Text Extraction ===
+# === Text Extraction (keep your existing functions) ===
 def extract_text_no_ocr(path):
-    """Extract text from PDF using PyMuPDF (fitz) - works for text-based PDFs."""
     try:
         doc = fitz.open(path)
-        text = ""
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text += page.get_text()
+        text = "".join(page.get_text() for page in doc)
         doc.close()
         return text
     except Exception as e:
@@ -63,456 +54,357 @@ def extract_text_no_ocr(path):
         raise
 
 def extract_text_with_ocr(path):
-    """Extract text from PDF using OCR - converts PDF pages to images first."""
     try:
         doc = fitz.open(path)
         full_text = ""
-        
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            
-            # Convert PDF page to image (PNG)
-            # Use a higher zoom factor for better OCR accuracy
+        for page in doc:
             zoom = 2.0
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
             img_bytes = pix.tobytes("png")
-            
-            # Use Google Cloud Vision to extract text from image
             image = vision.Image(content=img_bytes)
             response = vision_client.document_text_detection(image=image)
-            
             if response.full_text_annotation:
                 full_text += response.full_text_annotation.text + "\n"
             else:
-                # Fallback to regular text extraction if OCR fails
                 full_text += page.get_text() + "\n"
-        
         doc.close()
         return full_text
     except Exception as e:
-        print(f"Error extracting text with OCR: {e}")
-        # Fallback to non-OCR extraction if OCR fails
-        print("Falling back to non-OCR text extraction...")
+        print(f"Error with OCR: {e}, falling back")
         return extract_text_no_ocr(path)
 
-# === Chunk + Embedding Storage ===
-
 def store_chunks_and_embeddings(user_id, filename, text):
-    """Chunk text and store embeddings in Supabase."""
     try:
         if not text or not text.strip():
-            print(f"Warning: Empty text extracted from {filename}")
+            print(f"Warning: Empty text from {filename}")
             return
-        
         doc = Document(text=text)
         nodes = parser.get_nodes_from_documents([doc])
-        
         if not nodes:
-            print(f"Warning: No chunks created from {filename}")
+            print(f"Warning: No chunks from {filename}")
             return
-
         print(f"Processing {len(nodes)} chunks for {filename}...")
-        
-        # Delete existing chunks for this document first (in case of re-indexing)
         supabase.table("document_chunks").delete().match({
-            "user_id": user_id,
-            "filename": filename
+            "user_id": user_id, "filename": filename
         }).execute()
-        
         for i, node in enumerate(nodes):
             try:
-                # Generate embedding
                 embedding = gemini_embedding_model.get_text_embedding(node.text)
-                
-                # Insert chunk with embedding
-                result = supabase.table("document_chunks").insert({
+                supabase.table("document_chunks").insert({
                     "user_id": user_id,
                     "filename": filename,
                     "chunk": node.text,
                     "embedding": embedding
                 }).execute()
-                
                 if i % 10 == 0:
                     print(f"  Stored {i+1}/{len(nodes)} chunks...")
-                    
             except Exception as e:
-                print(f"Error storing chunk {i} for {filename}: {e}")
+                print(f"Error storing chunk {i}: {e}")
                 continue
-        
         print(f"✅ Successfully indexed {len(nodes)} chunks for {filename}")
-        
     except Exception as e:
-        print(f"Error in store_chunks_and_embeddings for {filename}: {e}")
+        print(f"Error in store_chunks_and_embeddings: {e}")
         raise
 
 def delete_document(user_id, filename):
-    """Delete a document and all its associated data."""
     try:
-        print(f"🗑️ Deleting document {filename} for user {user_id}")
-        
-        # 1. Delete embedding chunks
-        chunks_result = supabase.table("document_chunks").delete().match({
-            "user_id": user_id,
-            "filename": filename
+        print(f"🗑️ Deleting {filename}")
+        supabase.table("document_chunks").delete().match({
+            "user_id": user_id, "filename": filename
         }).execute()
-        print(f"  Deleted chunks: {len(chunks_result.data) if chunks_result.data else 0}")
-
-        # 2. Delete metadata
-        metadata_result = supabase.table("user_documents").delete().match({
-            "user_id": user_id,
-            "filename": filename
+        supabase.table("user_documents").delete().match({
+            "user_id": user_id, "filename": filename
         }).execute()
-        print(f"  Deleted metadata")
-
-        # 3. Delete the file from Storage
         storage_path = f"{user_id}/{filename}"
-        storage_result = supabase.storage.from_("pdfs").remove([storage_path])
-        print(f"  Deleted file from storage")
-
-        print(f"✅ Successfully deleted {filename}")
+        supabase.storage.from_("pdfs").remove([storage_path])
+        print(f"✅ Deleted {filename}")
         return f"Deleted {filename}"
-        
     except Exception as e:
-        error_msg = f"Error deleting document {filename}: {str(e)}"
-        print(f"❌ {error_msg}")
-        import traceback
-        traceback.print_exc()
-        return error_msg
+        print(f"❌ Error deleting: {e}")
+        return str(e)
 
-# === Query ===
 def query_docs(query, user_id):
-    """Query document chunks using vector similarity search."""
     try:
-        print(f"🔍 Querying documents for user {user_id}: {query}")
-        
-        # Generate query embedding
+        print(f"🔍 Query: {query}")
         query_embedding = gemini_embedding_model.get_text_embedding(query)
-        print(f"  Generated query embedding (dim: {len(query_embedding)})")
-
-        # Call Supabase RPC function for vector similarity search
-        response = supabase.rpc(
-            "match_document_chunks",
-            {
-                "query_embedding": query_embedding,
-                "match_user_id": user_id,
-                "match_count": 5
-            }
-        ).execute()
-
+        response = supabase.rpc("match_document_chunks", {
+            "query_embedding": query_embedding,
+            "match_user_id": user_id,
+            "match_count": 5
+        }).execute()
         if not response.data:
-            return "No relevant documents found. Please upload and index documents first."
-
+            return "No relevant documents found."
         chunks = [row["chunk"] for row in response.data]
         context = "\n\n".join(chunks)
-        
-        print(f"  Found {len(chunks)} relevant chunks")
-
-        # Generate answer using LLM
-        answer = llm.complete(
-            f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
-        )
-
+        print(f"  Found {len(chunks)} chunks")
+        answer = llm.complete(f"Context:\n{context}\n\nQuestion: {query}\nAnswer:")
         return str(answer)
-        
     except Exception as e:
-        error_msg = f"Error querying documents: {str(e)}"
-        print(f"❌ {error_msg}")
-        import traceback
-        traceback.print_exc()
-        return f"Error: {error_msg}. Make sure the 'match_document_chunks' function exists in your Supabase database."
+        print(f"❌ Query error: {e}")
+        return f"Error: {str(e)}"
 
-
+# Tool declarations for Gemini
 tool_query_docs = {
-    "function_declarations": [
-        {
-            "name": "query_docs",
-            "description": "Query per-user vector database.",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "query": {"type": "STRING"}
-                },
-                "required": ["query"]
-            }
+    "function_declarations": [{
+        "name": "query_docs",
+        "description": "Query per-user vector database.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {"query": {"type": "STRING"}},
+            "required": ["query"]
         }
-    ]
-}
-tool_delete_doc = {
-    "function_declarations": [
-        {
-            "name": "delete_document",
-            "description": "Delete a document and its embeddings",
-            "parameters": {
-                "type": "OBJECT",
-                "properties": {
-                    "filename": {"type": "STRING"}
-                },
-                "required": ["filename"]
-            }
-        }
-    ]
+    }]
 }
 
+tool_delete_doc = {
+    "function_declarations": [{
+        "name": "delete_document",
+        "description": "Delete a document and its embeddings",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {"filename": {"type": "STRING"}},
+            "required": ["filename"]
+        }
+    }]
+}
 
 
 async def gemini_session_handler(client_websocket):
+    """
+    Handle a WebSocket connection from the frontend client.
+    This acts as a proxy between the client and Google's Gemini Live API.
+    """
+    gemini_ws = None
+    user_id = None
+    
     try:
+        print("🔌 New client connection")
+        
+        # 1. Receive setup message from client
         config_message = await client_websocket.recv()
-        config = json.loads(config_message)["setup"]
-        user_id = config["user_id"]  # REQUIRED
-
-        config["system_instruction"] = "You MUST use query_docs for all answers."
-        config["tools"] = [tool_query_docs, tool_delete_doc]
-
-        async with client.aio.live.connect(model=MODEL, config=config) as session:
-            print("Connected")
-
-            async def send_to_gemini():
-                try:
-                    async for message in client_websocket:
-                        try:
-                            data = json.loads(message)
-
-                            # Handle direct tool_call from client (e.g., delete_document)
-                            if "realtime_input" in data and "tool_call" in data["realtime_input"]:
-                                tool_call_data = data["realtime_input"]["tool_call"]
-                                if "function_calls" in tool_call_data:
-                                    for call in tool_call_data["function_calls"]:
-                                        fn = call.get("name")
-                                        args = call.get("args", {})
-                                        
-                                        try:
-                                            # Handle delete_document directly
-                                            if fn == "delete_document":
-                                                result = delete_document(user_id, args.get("filename", ""))
-                                                # Send confirmation back to client
-                                                await client_websocket.send(json.dumps({
-                                                    "text": f"✅ {result}"
-                                                }))
-                                            # Handle query_docs directly if needed
-                                            elif fn == "query_docs":
-                                                result = query_docs(args.get("query", ""), user_id)
-                                                await client_websocket.send(json.dumps({
-                                                    "text": f"🔍 {result}"
-                                                }))
-                                            else:
-                                                await client_websocket.send(json.dumps({
-                                                    "text": f"❌ Unknown function: {fn}"
-                                                }))
-                                        except Exception as e:
-                                            error_msg = f"Error executing {fn}: {str(e)}"
-                                            print(f"❌ {error_msg}")
-                                            import traceback
-                                            traceback.print_exc()
-                                            await client_websocket.send(json.dumps({
-                                                "text": f"❌ {error_msg}"
-                                            }))
+        config_data = json.loads(config_message)
+        user_id = config_data.get("setup", {}).get("user_id")
+        
+        if not user_id:
+            await client_websocket.send(json.dumps({"text": "❌ user_id required"}))
+            return
+        
+        print(f"👤 User: {user_id}")
+        
+        # 2. Connect to Gemini Live API
+        gemini_uri = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={gemini_api_key}"
+        
+        gemini_ws = await websockets.connect(
+            gemini_uri,
+            additional_headers={"Content-Type": "application/json"}
+        )
+        print("✅ Connected to Gemini Live API")
+        
+        # 3. Send setup to Gemini
+        gemini_setup = {
+            "setup": {
+                "model": MODEL,
+                "system_instruction": {
+                    "parts": [{"text": "You MUST use query_docs for all answers."}]
+                },
+                "tools": [tool_query_docs, tool_delete_doc]
+            }
+        }
+        await gemini_ws.send(json.dumps(gemini_setup))
+        
+        # 4. Wait for setup response
+        setup_response = await gemini_ws.recv()
+        print("✅ Gemini setup complete")
+        
+        # 5. Create bidirectional message relay
+        async def client_to_gemini():
+            """Forward messages from client to Gemini"""
+            try:
+                async for message in client_websocket:
+                    data = json.loads(message)
+                    
+                    # Handle direct tool calls from client (delete operations)
+                    if "realtime_input" in data and "tool_call" in data["realtime_input"]:
+                        tool_call = data["realtime_input"]["tool_call"]
+                        if "function_calls" in tool_call:
+                            for call in tool_call["function_calls"]:
+                                fn = call.get("name")
+                                args = call.get("args", {})
+                                
+                                if fn == "delete_document":
+                                    result = delete_document(user_id, args.get("filename", ""))
+                                    await client_websocket.send(json.dumps({"text": f"✅ {result}"}))
+                                elif fn == "query_docs":
+                                    result = query_docs(args.get("query", ""), user_id)
+                                    await client_websocket.send(json.dumps({"text": f"🔍 {result}"}))
+                        continue
+                    
+                    # Handle PDF uploads (don't send to Gemini)
+                    if "realtime_input" in data:
+                        chunks = data["realtime_input"].get("media_chunks", [])
+                        for chunk in chunks:
+                            if chunk.get("mime_type") == "application/pdf":
+                                # Process PDF locally
+                                await process_pdf(client_websocket, user_id, chunk)
                                 continue
-
-                            if "realtime_input" in data:
-                                for chunk in data["realtime_input"].get("media_chunks", []):
-                                    if chunk["mime_type"] == "audio/pcm":
-                                        print(f"🎤 Received audio chunk ({len(chunk.get('data', ''))} bytes)")
-                                        await session.send(input={
-                                            "mime_type": "audio/pcm",
-                                            "data": chunk["data"]
-                                        })
-                                        print("  ✅ Sent to Gemini")
-
-                                    elif chunk["mime_type"] == "application/pdf":
-                                        filename = chunk["filename"]
-                                        use_ocr = chunk.get("ocr", False)
-                                        storage_path = chunk["storage_path"]  # Already uploaded from frontend
-
-                                        try:
-                                            print(f"📄 Processing PDF: {filename} (OCR: {use_ocr})")
-                                            
-                                            # 1) Download raw PDF bytes directly from Supabase
-                                            try:
-                                                download_response = supabase.storage.from_("pdfs").download(storage_path)
-                                                
-                                                # Handle different response types from Supabase Python client
-                                                if isinstance(download_response, bytes):
-                                                    pdf_bytes = download_response
-                                                elif hasattr(download_response, 'data'):
-                                                    pdf_bytes = download_response.data
-                                                elif hasattr(download_response, 'content'):
-                                                    pdf_bytes = download_response.content
-                                                else:
-                                                    # Try to read as bytes if it's a file-like object
-                                                    pdf_bytes = download_response.read() if hasattr(download_response, 'read') else download_response
-                                                
-                                                if not pdf_bytes:
-                                                    raise Exception(f"Download returned empty data for {storage_path}")
-                                            except Exception as download_error:
-                                                raise Exception(f"Failed to download PDF from Supabase: {str(download_error)}")
-                                            
-                                            print(f"  Downloaded {len(pdf_bytes)} bytes")
-
-                                            # 2) Insert metadata if not exists (avoid duplicates)
-                                            metadata_result = supabase.table("user_documents").upsert({
-                                                "user_id": user_id,
-                                                "filename": filename,
-                                                "original_path": storage_path
-                                            }, on_conflict="user_id,filename").execute()
-                                            print(f"  Metadata stored/updated")
-
-                                            # 3) Write to a temporary file
-                                            os.makedirs("./tmp", exist_ok=True)
-                                            # Sanitize filename to avoid path issues
-                                            safe_filename = filename.replace("/", "_").replace("\\", "_")
-                                            tmp_path = f"./tmp/{safe_filename}"
-
-                                            try:
-                                                with open(tmp_path, "wb") as f:
-                                                    f.write(pdf_bytes)
-                                                print(f"  Saved to temporary file: {tmp_path}")
-
-                                                # 4) OCR or normal extract
-                                                print(f"  Extracting text...")
-                                                if use_ocr:
-                                                    text = extract_text_with_ocr(tmp_path)
-                                                else:
-                                                    text = extract_text_no_ocr(tmp_path)
-                                                
-                                                if not text or not text.strip():
-                                                    raise Exception("No text extracted from PDF")
-                                                
-                                                print(f"  Extracted {len(text)} characters")
-
-                                                # 5) Store chunk embeddings
-                                                store_chunks_and_embeddings(user_id, filename, text)
-
-                                                # 6) Send success acknowledgment back to UI
-                                                await client_websocket.send(json.dumps({
-                                                    "text": f"✅ '{filename}' uploaded & indexed successfully"
-                                                }))
-                                                print(f"✅ Successfully processed {filename}")
-
-                                            except Exception as e:
-                                                error_msg = f"Error processing PDF {filename}: {str(e)}"
-                                                print(f"❌ {error_msg}")
-                                                await client_websocket.send(json.dumps({
-                                                    "text": f"❌ Error indexing '{filename}': {str(e)}"
-                                                }))
-                                            
-                                            finally:
-                                                # Clean up temporary file
-                                                if os.path.exists(tmp_path):
-                                                    try:
-                                                        os.remove(tmp_path)
-                                                    except:
-                                                        pass
-
-                                        except Exception as e:
-                                            error_msg = f"Failed to process PDF {filename}: {str(e)}"
-                                            print(f"❌ {error_msg}")
-                                            import traceback
-                                            traceback.print_exc()
-                                            await client_websocket.send(json.dumps({
-                                                "text": f"❌ Error: {error_msg}"
-                                            }))
-                        except Exception as e:
-                            print(f"❌ Error processing message: {e}")
-                            import traceback
-                            traceback.print_exc()
-                except Exception as e:
-                    print(f"❌ Error in send_to_gemini: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-
-            async def receive_from_gemini():
-                try:
-                    async for response in session.receive():
-                        try:
-                            if response.server_content is None:
-                                if response.tool_call is not None:
-                                    #handle the tool call
-                                    print(f"Tool call received: {response.tool_call}")
-
-                                    function_calls = response.tool_call.function_calls
-                                    function_responses = []
-
-                                    for function_call in function_calls:
-                                        name = function_call.name
-                                        args = function_call.args
-                                        # Extract the numeric part from Gemini's function call ID
-                                        call_id = function_call.id
-
-                                        # Validate function name
-                                        if name == "query_docs":
-                                            try:
-                                                result = query_docs(args["query"], user_id)
-                                                function_responses.append(
-                                                    {
-                                                        "name": name,
-                                                        "response": {"result": result},
-                                                        "id": call_id  
-                                                    }
-                                                ) 
-                                                print("Function executed")
-                                            except Exception as e:
-                                                print(f"Error executing function: {e}")
-                                                continue
-
-                                        elif name == "delete_document":
-                                            try:
-                                                result = delete_document(user_id, args["filename"])
-                                                function_responses.append(
-                                                    {
-                                                        "name": name,
-                                                        "response": {"result": result},
-                                                        "id": call_id  
-                                                    }
-                                                )
-                                                print("Function executed")
-                                            except Exception as e:
-                                                print(f"Error executing function: {e}")
-                                                continue
-
-                                    # Send function response back to Gemini
-                                    print(f"function_responses: {function_responses}")
-                                    await session.send(input=function_responses)
-                                    continue
-
-                            # ======= HANDLE MODEL OUTPUT =======
-                            model_turn = response.server_content.model_turn
-                            if model_turn:
-                                for part in model_turn.parts:
-                                    if hasattr(part, "text") and part.text is not None:
-                                        print(f"💬 Gemini text response: {part.text[:100]}...")
-                                        await client_websocket.send(json.dumps({"text": part.text}))
-                                    elif hasattr(part, "inline_data") and part.inline_data is not None:
-                                        print(f"🔊 Gemini audio response ({len(part.inline_data.data)} bytes)")
-                                        base64_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                        await client_websocket.send(json.dumps({
-                                            "audio": base64_audio,
-                                        }))
-                                        print("audio received")
-
-                            if response.server_content.turn_complete:
-                                print('\n<Turn complete>')
-
-                        except Exception as e:
-                            print(f"❌ Error processing response: {e}")
-                            import traceback
-                            traceback.print_exc()
-                except Exception as e:
-                    print(f"❌ Error in receive_from_gemini: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-
-
-            await asyncio.gather(
-                asyncio.create_task(send_to_gemini()),
-                asyncio.create_task(receive_from_gemini())
-            )
-
+                            
+                            # Forward audio to Gemini
+                            if chunk.get("mime_type") == "audio/pcm":
+                                print(f"🎤 Audio chunk ({len(chunk.get('data', ''))} bytes)")
+                                await gemini_ws.send(json.dumps(data))
+            except websockets.exceptions.ConnectionClosed:
+                print("🔌 Client disconnected")
+            except Exception as e:
+                print(f"❌ client_to_gemini error: {e}")
+        
+        async def gemini_to_client():
+            """Forward messages from Gemini to client"""
+            try:
+                async for raw_response in gemini_ws:
+                    response = json.loads(raw_response)
+                    
+                    # Handle tool calls from Gemini
+                    if "toolCall" in response:
+                        print("🔧 Tool call from Gemini")
+                        function_calls = response["toolCall"].get("functionCalls", [])
+                        function_responses = []
+                        
+                        for fc in function_calls:
+                            name = fc.get("name")
+                            args = fc.get("args", {})
+                            call_id = fc.get("id")
+                            
+                            if name == "query_docs":
+                                try:
+                                    result = query_docs(args.get("query", ""), user_id)
+                                    function_responses.append({
+                                        "name": name,
+                                        "response": {"result": result},
+                                        "id": call_id
+                                    })
+                                    print("✅ query_docs executed")
+                                except Exception as e:
+                                    print(f"❌ query_docs error: {e}")
+                                    function_responses.append({
+                                        "name": name,
+                                        "response": {"error": str(e)},
+                                        "id": call_id
+                                    })
+                            
+                            elif name == "delete_document":
+                                try:
+                                    result = delete_document(user_id, args.get("filename", ""))
+                                    function_responses.append({
+                                        "name": name,
+                                        "response": {"result": result},
+                                        "id": call_id
+                                    })
+                                    print("✅ delete_document executed")
+                                except Exception as e:
+                                    print(f"❌ delete_document error: {e}")
+                                    function_responses.append({
+                                        "name": name,
+                                        "response": {"error": str(e)},
+                                        "id": call_id
+                                    })
+                        
+                        # Send function responses back to Gemini
+                        if function_responses:
+                            await gemini_ws.send(json.dumps({
+                                "tool_response": {"function_responses": function_responses}
+                            }))
+                        continue
+                    
+                    # Forward server content to client
+                    if "serverContent" in response:
+                        server_content = response["serverContent"]
+                        
+                        # Extract text
+                        if "modelTurn" in server_content:
+                            parts = server_content["modelTurn"].get("parts", [])
+                            for part in parts:
+                                if "text" in part:
+                                    print(f"💬 Text: {part['text'][:50]}...")
+                                    await client_websocket.send(json.dumps({"text": part["text"]}))
+                                
+                                if "inlineData" in part:
+                                    print(f"🔊 Audio")
+                                    await client_websocket.send(json.dumps({
+                                        "audio": part["inlineData"]["data"]
+                                    }))
+                        
+                        if server_content.get("turnComplete"):
+                            print("✅ Turn complete")
+                    
+            except websockets.exceptions.ConnectionClosed:
+                print("🔌 Gemini disconnected")
+            except Exception as e:
+                print(f"❌ gemini_to_client error: {e}")
+        
+        # Run both relay tasks concurrently
+        await asyncio.gather(
+            client_to_gemini(),
+            gemini_to_client(),
+            return_exceptions=True
+        )
+        
     except Exception as e:
-        print("Error:", e)
+        print(f"❌ Session error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if gemini_ws:
+            await gemini_ws.close()
+        print(f"🏁 Session ended for {user_id}")
+
+
+async def process_pdf(client_websocket, user_id, chunk):
+    """Process PDF upload separately"""
+    try:
+        filename = chunk["filename"]
+        storage_path = chunk["storage_path"]
+        use_ocr = chunk.get("ocr", False)
+        
+        print(f"📄 Processing {filename}")
+        
+        # Download from Supabase
+        download_response = supabase.storage.from_("pdfs").download(storage_path)
+        if isinstance(download_response, bytes):
+            pdf_bytes = download_response
+        elif hasattr(download_response, 'data'):
+            pdf_bytes = download_response.data
+        else:
+            pdf_bytes = download_response.read() if hasattr(download_response, 'read') else download_response
+        
+        # Store metadata
+        supabase.table("user_documents").upsert({
+            "user_id": user_id,
+            "filename": filename,
+            "original_path": storage_path
+        }, on_conflict="user_id,filename").execute()
+        
+        # Extract and store
+        os.makedirs("./tmp", exist_ok=True)
+        tmp_path = f"./tmp/{filename.replace('/', '_')}"
+        
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(pdf_bytes)
+            
+            text = extract_text_with_ocr(tmp_path) if use_ocr else extract_text_no_ocr(tmp_path)
+            store_chunks_and_embeddings(user_id, filename, text)
+            
+            await client_websocket.send(json.dumps({
+                "text": f"✅ '{filename}' uploaded & indexed"
+            }))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                
+    except Exception as e:
+        print(f"❌ PDF error: {e}")
+        await client_websocket.send(json.dumps({"text": f"❌ Error: {str(e)}"}))
 
 
 async def main():
@@ -521,10 +413,13 @@ async def main():
         gemini_session_handler,
         "0.0.0.0",
         PORT,
-        max_size=50 * 1024 * 1024  # 50MB
+        max_size=50 * 1024 * 1024,
+        ping_interval=20,
+        ping_timeout=20
     ):
-        print("Running on port", PORT)
+        print(f"🚀 Server running on port {PORT}")
         await asyncio.Future()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
