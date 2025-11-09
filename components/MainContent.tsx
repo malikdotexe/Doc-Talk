@@ -23,12 +23,47 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // NEW: Animation states
+  const [isGeminiSpeaking, setIsGeminiSpeaking] = useState(false);
+  const [isUserSending, setIsUserSending] = useState(false);
 
   useEffect(() => {
     if (chatLogRef.current) {
       chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // NEW: Track Gemini speaking state
+  useEffect(() => {
+    const handleWebSocketMessage = (event: MessageEvent) => {
+      try {
+        const messageData = JSON.parse(event.data);
+        if (messageData.audio) {
+          setIsGeminiSpeaking(true);
+          // Reset speaking state after audio playback (assuming ~3-5 seconds)
+          setTimeout(() => setIsGeminiSpeaking(false), 3000);
+        }
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    if (webSocket) {
+      webSocket.addEventListener('message', handleWebSocketMessage);
+      return () => webSocket.removeEventListener('message', handleWebSocketMessage);
+    }
+  }, [webSocket]);
+
+  // NEW: Track user sending state
+  useEffect(() => {
+    if (isRecording) {
+      setIsUserSending(true);
+    } else {
+      // Keep sending animation for a brief moment after stopping
+      setTimeout(() => setIsUserSending(false), 500);
+    }
+  }, [isRecording]);
 
   // NEW: Handle PDF selection from sidebar
   const handlePdfSelect = async (filename: string) => {
@@ -88,7 +123,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
 
   return (
     <main className="flex justify-center gap-10 py-16 px-16 flex-wrap">
-
       {/* UPDATED: Pass selection handlers to UploadedDocuments */}
       <UploadedDocuments 
         webSocket={webSocket} 
@@ -96,7 +130,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
         selectedPdf={selectedPdf}
       />
 
-      {/* Middle: PDF + Voice */}
+      {/* Middle: PDF + Voice + Animations */}
       <div className="bg-white rounded-[20px] p-6 shadow-[0_6px_20px_rgba(0,0,0,0.08)] flex-1 min-w-[360px] max-w-[600px]">
         
         {/* NEW: Upload Progress Bar */}
@@ -115,6 +149,30 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           </div>
         )}
 
+        {/* NEW: Status Indicators */}
+        <div className="flex items-center justify-between mb-4">
+          {/* User sending animation */}
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full transition-colors duration-300 ${
+              isUserSending ? 'bg-red-500 animate-pulse' : 'bg-gray-300'
+            }`}></div>
+            <span className="text-sm text-gray-600">
+              {isUserSending ? 'Sending audio...' : 'Ready to speak'}
+            </span>
+          </div>
+
+          {/* Gemini speaking animation */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">
+              {isGeminiSpeaking ? 'Gemini speaking...' : 'Listening'}
+            </span>
+            <div className={`w-3 h-3 rounded-full transition-colors duration-300 ${
+              isGeminiSpeaking ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
+            }`}></div>
+          </div>
+        </div>
+
+        {/* Voice Controls */}
         <div className="flex gap-2.5 mb-5">
           <button
             id="startButton"
@@ -136,6 +194,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           </button>
         </div>
 
+        {/* PDF Upload Input */}
         <input
           type="file"
           id="pdfInput"
@@ -146,6 +205,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           style={{ display: 'none' }}
         />
 
+        {/* PDF Viewer */}
         {pdfUrl && (
           <div className="mt-5">
             <embed
@@ -155,29 +215,23 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
             />
           </div>
         )}
-      </div>
 
-      {/* Right: Chat */}
-      <div className="bg-white rounded-[20px] p-6 shadow-[0_6px_20px_rgba(0,0,0,0.08)] flex-1 min-w-[360px] max-w-[600px]">
-        <h3 className="text-xl font-semibold mb-4">Chat</h3>
-        <div
-          id="chatLog"
-          ref={chatLogRef}
-          className="h-[500px] overflow-y-auto border border-gray-300 rounded-xl p-4"
-        >
-          {messages.length === 0 && (
-            <p className="text-gray-500 text-center">
-              No messages yet. Start talking to see responses here.
-            </p>
-          )}
-          {messages.map((message, index) => (
-            <p key={index} className="mb-2">
-              {message}
-            </p>
-          ))}
-        </div>
+        {/* NEW: Gemini Speaking Animation Overlay */}
+        {isGeminiSpeaking && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 rounded-[20px] flex items-center justify-center">
+            <div className="text-center text-white">
+              <div className="mb-4">
+                <div className="flex justify-center space-x-1">
+                  <div className="w-4 h-4 bg-blue-400 rounded-full animate-bounce"></div>
+                  <div className="w-4 h-4 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-4 h-4 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+              </div>
+              <p className="text-lg font-semibold">Gemini is speaking...</p>
+            </div>
+          </div>
+        )}
       </div>
-
     </main>
   );
 }
