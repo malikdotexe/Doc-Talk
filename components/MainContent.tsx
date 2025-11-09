@@ -26,7 +26,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   
   // NEW: Animation states
   const [isGeminiSpeaking, setIsGeminiSpeaking] = useState(false);
-  const [isUserSending, setIsUserSending] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
 
   useEffect(() => {
     if (chatLogRef.current) {
@@ -41,8 +41,12 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
         const messageData = JSON.parse(event.data);
         if (messageData.audio) {
           setIsGeminiSpeaking(true);
+          setCurrentStatus('speaking');
           // Reset speaking state after audio playback (assuming ~3-5 seconds)
-          setTimeout(() => setIsGeminiSpeaking(false), 3000);
+          setTimeout(() => {
+            setIsGeminiSpeaking(false);
+            setCurrentStatus('idle');
+          }, 4000);
         }
       } catch (err) {
         console.error('Error parsing WebSocket message:', err);
@@ -55,15 +59,14 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   }, [webSocket]);
 
-  // NEW: Track user sending state
+  // NEW: Track user recording state
   useEffect(() => {
     if (isRecording) {
-      setIsUserSending(true);
-    } else {
-      // Keep sending animation for a brief moment after stopping
-      setTimeout(() => setIsUserSending(false), 500);
+      setCurrentStatus('recording');
+    } else if (!isGeminiSpeaking) {
+      setCurrentStatus('idle');
     }
-  }, [isRecording]);
+  }, [isRecording, isGeminiSpeaking]);
 
   // NEW: Handle PDF selection from sidebar
   const handlePdfSelect = async (filename: string) => {
@@ -96,6 +99,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     if (file) {
       setIsUploading(true);
       setUploadProgress(0);
+      setCurrentStatus('processing');
       
       // Simulate progress updates during upload
       const progressInterval = setInterval(() => {
@@ -110,19 +114,41 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
         setTimeout(() => {
           setIsUploading(false);
           setUploadProgress(0);
+          if (!isRecording && !isGeminiSpeaking) {
+            setCurrentStatus('idle');
+          }
         }, 1000);
       } catch (error) {
         console.error('Upload failed:', error);
         setIsUploading(false);
         setUploadProgress(0);
+        if (!isRecording && !isGeminiSpeaking) {
+          setCurrentStatus('idle');
+        }
       } finally {
         clearInterval(progressInterval);
       }
     }
   };
 
+  // Status display helper
+  const getStatusDisplay = () => {
+    switch (currentStatus) {
+      case 'recording':
+        return { text: 'Recording...', color: 'bg-red-500', textColor: 'text-red-700' };
+      case 'processing':
+        return { text: 'Processing...', color: 'bg-yellow-500', textColor: 'text-yellow-700' };
+      case 'speaking':
+        return { text: 'AI Speaking...', color: 'bg-blue-500', textColor: 'text-blue-700' };
+      default:
+        return { text: 'Ready', color: 'bg-green-500', textColor: 'text-green-700' };
+    }
+  };
+
+  const statusDisplay = getStatusDisplay();
+
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 py-8 px-4">
+    <main className="min-h-screen bg-gray-50 py-8 px-4">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
@@ -141,33 +167,25 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           <div className="lg:col-span-9">
             
             {/* Voice Control Panel */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-xl border border-white/20 mb-6">
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 mb-6">
               
               {/* Status Header */}
               <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                <h2 className="text-2xl font-bold text-gray-900">
                   Voice Assistant
                 </h2>
                 
-                {/* Connection Status */}
-                <div className="flex items-center gap-4">
-                  {/* User Status */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-50 border border-red-200">
-                    <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                      isUserSending ? 'bg-red-500 animate-pulse shadow-lg shadow-red-500/50' : 'bg-red-300'
+                {/* Unified Status Indicator */}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 border border-gray-200">
+                    <div className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                      currentStatus === 'idle' ? 'bg-green-500' : 
+                      currentStatus === 'recording' ? 'bg-red-500 animate-pulse' :
+                      currentStatus === 'processing' ? 'bg-yellow-500 animate-pulse' :
+                      'bg-blue-500 animate-pulse'
                     }`}></div>
-                    <span className="text-xs font-medium text-red-700">
-                      {isUserSending ? 'Recording' : 'Ready'}
-                    </span>
-                  </div>
-
-                  {/* AI Status */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-200">
-                    <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                      isGeminiSpeaking ? 'bg-blue-500 animate-pulse shadow-lg shadow-blue-500/50' : 'bg-blue-300'
-                    }`}></div>
-                    <span className="text-xs font-medium text-blue-700">
-                      {isGeminiSpeaking ? 'AI Speaking' : 'Listening'}
+                    <span className={`text-sm font-medium ${statusDisplay.textColor}`}>
+                      {statusDisplay.text}
                     </span>
                   </div>
                 </div>
@@ -179,39 +197,37 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   id="startButton"
                   onClick={startRecording}
                   disabled={isRecording}
-                  className="group relative bg-gradient-to-r from-indigo-500 to-purple-600 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                  className="bg-gray-900 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-gray-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-400 to-purple-500 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                  <i className="material-icons text-xl relative z-10">mic</i>
-                  <span className="relative z-10">Start Recording</span>
+                  <i className="material-icons text-xl">mic</i>
+                  <span>Start Recording</span>
                 </button>
                 
                 <button
                   id="stopButton"
                   onClick={stopRecording}
                   disabled={!isRecording}
-                  className="group relative bg-gradient-to-r from-red-500 to-pink-600 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:from-red-600 hover:to-pink-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                  className="bg-red-600 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-red-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-red-400 to-pink-500 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                  <i className="material-icons text-xl relative z-10">stop</i>
-                  <span className="relative z-10">Stop Recording</span>
+                  <i className="material-icons text-xl">stop</i>
+                  <span>Stop Recording</span>
                 </button>
               </div>
             </div>
 
             {/* PDF Viewer Panel */}
-            <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-xl border border-white/20 relative overflow-hidden">
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 relative overflow-hidden">
               
               {/* Upload Progress */}
               {isUploading && (
-                <div className="mb-6 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200">
-                  <div className="flex justify-between text-sm font-medium text-indigo-700 mb-2">
+                <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                  <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
                     <span>Processing Document...</span>
                     <span>{uploadProgress}%</span>
                   </div>
-                  <div className="w-full bg-indigo-100 rounded-full h-3 overflow-hidden">
+                  <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
                     <div 
-                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full transition-all duration-500 ease-out shadow-sm"
+                      className="h-full bg-gray-900 rounded-full transition-all duration-500 ease-out"
                       style={{ width: `${uploadProgress}%` }}
                     ></div>
                   </div>
@@ -231,15 +247,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
               {/* PDF Viewer */}
               {pdfUrl ? (
                 <div className="relative">
-                  <div className="absolute top-4 right-4 z-10">
-                    <button
-                      onClick={() => pdfInputRef.current?.click()}
-                      className="bg-white/90 backdrop-blur-sm text-indigo-600 px-4 py-2 rounded-lg font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:bg-white border border-indigo-200"
-                    >
-                      <i className="material-icons text-sm mr-2">upload_file</i>
-                      Change PDF
-                    </button>
-                  </div>
                   <embed
                     src={pdfUrl}
                     type="application/pdf"
@@ -248,8 +255,8 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-[400px] text-center">
-                  <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mb-4">
-                    <i className="material-icons text-3xl text-indigo-500">description</i>
+                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                    <i className="material-icons text-3xl text-gray-400">description</i>
                   </div>
                   <h3 className="text-xl font-semibold text-gray-700 mb-2">No Document Selected</h3>
                   <p className="text-gray-500 mb-6 max-w-md">
@@ -257,7 +264,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   </p>
                   <button
                     onClick={() => pdfInputRef.current?.click()}
-                    className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-3 rounded-lg font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:from-indigo-600 hover:to-purple-700 transform hover:-translate-y-0.5"
+                    className="bg-gray-900 text-white px-6 py-3 rounded-lg font-medium shadow-lg hover:shadow-xl transition-all duration-300 hover:bg-gray-800 transform hover:-translate-y-0.5"
                   >
                     <i className="material-icons text-sm mr-2">upload</i>
                     Upload PDF
@@ -267,18 +274,18 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
 
               {/* Gemini Speaking Overlay */}
               {isGeminiSpeaking && (
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/90 to-purple-600/90 backdrop-blur-sm rounded-2xl flex items-center justify-center z-20">
+                <div className="absolute inset-0 bg-black bg-opacity-75 rounded-2xl flex items-center justify-center z-20">
                   <div className="text-center text-white">
                     <div className="mb-6">
                       <div className="flex justify-center space-x-2">
-                        <div className="w-5 h-5 bg-white rounded-full animate-bounce shadow-lg"></div>
-                        <div className="w-5 h-5 bg-white rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-5 h-5 bg-white rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.2s' }}></div>
-                        <div className="w-5 h-5 bg-white rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.3s' }}></div>
+                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg"></div>
+                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.1s' }}></div>
+                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.2s' }}></div>
+                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.3s' }}></div>
                       </div>
                     </div>
                     <h3 className="text-2xl font-bold mb-2">Gemini is speaking...</h3>
-                    <p className="text-blue-100">Processing your request</p>
+                    <p className="text-blue-200">Please wait while AI responds</p>
                   </div>
                 </div>
               )}
