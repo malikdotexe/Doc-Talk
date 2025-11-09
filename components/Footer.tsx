@@ -18,10 +18,13 @@ export default function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">Technology</h4>
             <ul className="space-y-2 text-sm text-gray-400">
-              <li>Gemini Live API</li>
-              <li>LangChain</li>
+              <li>NextJs</li>
               <li>Supabase</li>
-              <li>WebRTC</li>
+              <li>TypeScript</li>
+              <li>LlamaIndex</li>
+              <li>Tailwind CSS</li>
+              <li>WebSocket</li>
+              <li>Gemini Live API</li>
             </ul>
           </div>
 

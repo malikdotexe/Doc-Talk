@@ -452,7 +452,6 @@ async def gemini_session_handler(client_websocket):
                                                         "id": call_id  
                                                     }
                                                 ) 
-                                                await client_websocket.send(json.dumps({"text": json.dumps(function_responses)}))
                                                 print("Function executed")
                                             except Exception as e:
                                                 print(f"Error executing function: {e}")
@@ -468,7 +467,6 @@ async def gemini_session_handler(client_websocket):
                                                         "id": call_id  
                                                     }
                                                 )
-                                                await client_websocket.send(json.dumps({"text": json.dumps(function_responses)}))
                                                 print("Function executed")
                                             except Exception as e:
                                                 print(f"Error executing function: {e}")

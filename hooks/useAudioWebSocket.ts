@@ -195,7 +195,20 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
         const messageData = JSON.parse(event.data);
 
         if (messageData.text) {
-          displayMessage('GEMINI: ' + messageData.text);
+          // Check if the text is a JSON array (function response)
+          try {
+            const parsedData = JSON.parse(messageData.text);
+            if (Array.isArray(parsedData) && parsedData[0]?.response?.result) {
+              // Extract just the result from the function response
+              displayMessage('GEMINI: ' + parsedData[0].response.result);
+            } else {
+              // Normal text response
+              displayMessage('GEMINI: ' + messageData.text);
+            }
+          } catch (parseError) {
+            // Not JSON, treat as normal text
+            displayMessage('GEMINI: ' + messageData.text);
+          }
         }
         if (messageData.audio) {
           ingestAudioChunkToPlay(messageData.audio);
@@ -206,7 +219,6 @@ export function useAudioWebSocket(): UseAudioWebSocketReturn {
     },
     [displayMessage, ingestAudioChunkToPlay]
   );
-
   // Connect WebSocket with retry
   const connectWithRetry = useCallback(
     (retries = 5, delay = 2000) => {
