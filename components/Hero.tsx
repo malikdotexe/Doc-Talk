@@ -51,7 +51,7 @@ export default function Hero({ useOCR, setUseOCR }: { useOCR: boolean; setUseOCR
 
             {/* OCR Toggle */}
             <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-600">OCR</span>
+              <span className="text-sm text-gray-600">PDF has Images</span>
               <button
                 onClick={() => setUseOCR(!useOCR)}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
