@@ -14,6 +14,8 @@ from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.llms.gemini import Gemini
 from llama_index.core import Document
 
+from google.cloud import speech
+
 load_dotenv()
 
 # === Environment ===
@@ -27,7 +29,10 @@ vision_client = vision.ImageAnnotatorClient()
 parser = SimpleNodeParser(chunk_size=500)
 
 gemini_embedding_model = GeminiEmbedding(api_key=gemini_api_key, model_name="models/text-embedding-004")
-llm = Gemini(api_key=gemini_api_key, model_name="models/gemini-2.0-flash-exp")
+llm = Gemini(api_key=gemini_api_key, model_name="models/gemini-2.5-flash")
+
+
+speech_client = speech.SpeechClient()
 
 # Verify embedding dimension on startup
 def verify_embedding_dimension():
@@ -73,6 +78,32 @@ def extract_text_with_ocr(path):
     except Exception as e:
         print(f"Error with OCR: {e}, falling back")
         return extract_text_no_ocr(path)
+
+def transcribe_audio(audio_data):
+    """Transcribe base64 PCM audio to text"""
+    try:
+        # Decode base64 to bytes
+        audio_bytes = base64.b64decode(audio_data)
+        
+        # Create speech recognition request
+        audio = speech.RecognitionAudio(content=audio_bytes)
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=16000,
+            language_code="en-US",
+            enable_automatic_punctuation=True,
+        )
+        
+        # Transcribe
+        response = speech_client.recognize(config=config, audio=audio)
+        
+        # Extract transcript
+        if response.results:
+            return response.results[0].alternatives[0].transcript
+        return ""
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return ""
 
 def store_chunks_and_embeddings(user_id, filename, text):
     try:
@@ -217,6 +248,9 @@ async def gemini_session_handler(client_websocket):
         setup_response = await gemini_ws.recv()
         print("✅ Gemini setup complete")
         
+        user_transcript = ""
+        transcription_chunks = []
+
         # 5. Create bidirectional message relay
         async def client_to_gemini():
             """Forward messages from client to Gemini"""
@@ -252,6 +286,20 @@ async def gemini_session_handler(client_websocket):
                             # Forward audio to Gemini
                             if chunk.get("mime_type") == "audio/pcm":
                                 print(f"🎤 Audio chunk ({len(chunk.get('data', ''))} bytes)")
+                                
+                                # Transcribe this chunk
+                                transcript = transcribe_audio(chunk.get('data', ''))
+                                if transcript:
+                                    transcription_chunks.append(transcript)
+                                    user_transcript = " ".join(transcription_chunks)
+                                    
+                                    # Send partial transcription to frontend
+                                    await client_websocket.send(json.dumps({
+                                        "user_transcript": user_transcript,
+                                        "transcript_partial": True
+                                    }))
+                                
+                                # Forward audio to Gemini
                                 await gemini_ws.send(json.dumps(data))
             except websockets.exceptions.ConnectionClosed:
                 print("🔌 Client disconnected")
@@ -264,6 +312,8 @@ async def gemini_session_handler(client_websocket):
                 async for raw_response in gemini_ws:
                     response = json.loads(raw_response)
                     
+                    print(f"🔍 Full response: {json.dumps(response, indent=2, default=str)[:500]}...")
+
                     # Handle tool calls from Gemini
                     if "toolCall" in response:
                         print("🔧 Tool call from Gemini")
@@ -319,20 +369,40 @@ async def gemini_session_handler(client_websocket):
                     # Forward server content to client
                     if "serverContent" in response:
                         server_content = response["serverContent"]
+                        print(f"📦 Server content: {json.dumps(server_content, indent=2, default=str)[:500]}...")
                         
                         # Extract text
                         if "modelTurn" in server_content:
                             parts = server_content["modelTurn"].get("parts", [])
-                            for part in parts:
+                            print(f"�� Parts found: {len(parts)}")
+                            for i, part in enumerate(parts):
+                                print(f"🔸 Part {i}: {json.dumps(part, indent=2, default=str)[:200]}...")
                                 if "text" in part:
                                     print(f"💬 Text: {part['text'][:50]}...")
                                     await client_websocket.send(json.dumps({"text": part["text"]}))
                                 
                                 if "inlineData" in part:
-                                    print(f"🔊 Audio")
+                                    print(f"�� Audio data found")
                                     await client_websocket.send(json.dumps({
                                         "audio": part["inlineData"]["data"]
                                     }))
+                                if "codeExecutionResult" in part:
+                                    result_text = part["codeExecutionResult"].get("output", "").strip()
+                                    if result_text:
+                                        try:
+                                            # Parse the JSON string and extract the result
+                                            import ast
+                                            result_dict = ast.literal_eval(result_text)
+                                            clean_result = result_dict.get('result', result_text)
+                                            # Prefix with DocTalk
+                                            formatted_result = f"DocTalk: {clean_result}"
+                                            print(f"🔧 Tool result: {formatted_result}")
+                                            await client_websocket.send(json.dumps({"text": formatted_result}))
+                                        except (ValueError, SyntaxError) as e:
+                                            # Fallback if parsing fails
+                                            formatted_result = f"DocTalk: {result_text}"
+                                            print(f"🔧 Tool result (fallback): {formatted_result}")
+                                            await client_websocket.send(json.dumps({"text": formatted_result}))
                         
                         if server_content.get("turnComplete"):
                             print("✅ Turn complete")

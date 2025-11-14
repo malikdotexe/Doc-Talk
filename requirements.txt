@@ -5,5 +5,6 @@ llama-index-embeddings-gemini==0.3.1
 websockets
 python-dotenv
 google-cloud-vision
+google-cloud-speech
 PyMuPDF==1.24.10
 supabase

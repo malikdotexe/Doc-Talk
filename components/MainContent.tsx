@@ -1,7 +1,7 @@
 'use client';
 import UploadedDocuments from "@/components/UploadedDocuments";
 
-import { useEffect, useRef, useState } from 'react';  // Added useState
+import { useEffect, useRef, useState } from 'react';  
 import { useAudioWebSocket } from '@/hooks/useAudioWebSocket';
 
 export default function MainContent({ useOCR }: { useOCR: boolean }){
@@ -25,8 +25,15 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   const [isUploading, setIsUploading] = useState(false);
   
   // NEW: Animation states
-  const [isGeminiSpeaking, setIsGeminiSpeaking] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
+
+  const [conversation, setConversation] = useState<Array<{
+    id: string;
+    type: 'user' | 'ai';
+    content: string;
+    timestamp: Date;
+  }>>([]);
+  const [currentTranscript, setCurrentTranscript] = useState("");
 
   useEffect(() => {
     if (chatLogRef.current) {
@@ -34,43 +41,14 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   }, [messages]);
 
-  // IMPROVED: Better Gemini speaking state tracking using turnComplete flag
-  useEffect(() => {
-    const handleWebSocketMessage = (event: MessageEvent) => {
-      try {
-        const messageData = JSON.parse(event.data);
-        
-        // Start speaking when audio data is received
-        if (messageData.audio) {
-          setIsGeminiSpeaking(true);
-          setCurrentStatus('speaking');
-        }
-        
-        // Check for turnComplete to know when Gemini finishes speaking
-        if (messageData.serverContent && messageData.serverContent.turnComplete) {
-          setIsGeminiSpeaking(false);
-          setCurrentStatus('idle');
-        }
-        
-      } catch (err) {
-        console.error('Error parsing WebSocket message:', err);
-      }
-    };
-
-    if (webSocket) {
-      webSocket.addEventListener('message', handleWebSocketMessage);
-      return () => webSocket.removeEventListener('message', handleWebSocketMessage);
-    }
-  }, [webSocket]);
-
   // NEW: Track user recording state
   useEffect(() => {
     if (isRecording) {
       setCurrentStatus('recording');
-    } else if (!isGeminiSpeaking) {
+    } else if (!isRecording) {
       setCurrentStatus('idle');
     }
-  }, [isRecording, isGeminiSpeaking]);
+  }, [isRecording]);
 
   // NEW: Handle PDF selection from sidebar
   const handlePdfSelect = async (filename: string) => {
@@ -118,7 +96,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
         setTimeout(() => {
           setIsUploading(false);
           setUploadProgress(0);
-          if (!isRecording && !isGeminiSpeaking) {
+          if (!isRecording) {
             setCurrentStatus('idle');
           }
         }, 1000);
@@ -126,7 +104,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
         console.error('Upload failed:', error);
         setIsUploading(false);
         setUploadProgress(0);
-        if (!isRecording && !isGeminiSpeaking) {
+        if (!isRecording) {
           setCurrentStatus('idle');
         }
       } finally {
@@ -150,6 +128,61 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   };
 
   const statusDisplay = getStatusDisplay();
+
+  useEffect(() => {
+    const handleWebSocketMessage = (event: MessageEvent) => {
+      try {
+        const messageData = JSON.parse(event.data);
+        
+        // Handle user transcription
+        if (messageData.user_transcript) {
+          setCurrentTranscript(messageData.user_transcript);
+        }
+        
+        // Handle AI text responses - simplified condition
+        if (messageData.text) {
+          // Skip if this is just a transcription update (not AI response)
+          if (!messageData.user_transcript && !messageData.transcript_partial) {
+            const aiMessage = {
+              id: Date.now().toString(),
+              type: 'ai' as const,
+              content: messageData.text,
+              timestamp: new Date()
+            };
+            setConversation(prev => [...prev, aiMessage]);
+          }
+        }
+        
+      } catch (err) {
+        console.error('Error parsing WebSocket message:', err);
+      }
+    };
+
+    if (webSocket) {
+      webSocket.addEventListener('message', handleWebSocketMessage);
+      return () => webSocket.removeEventListener('message', handleWebSocketMessage);
+    }
+  }, [webSocket]);
+
+  useEffect(() => {
+    if (!isRecording && currentTranscript) {
+      const userMessage = {
+        id: Date.now().toString(),
+        type: 'user' as const,
+        content: currentTranscript,
+        timestamp: new Date()
+      };
+      setConversation(prev => [...prev, userMessage]);
+      setCurrentTranscript("");
+    }
+  }, [isRecording, currentTranscript]);
+  // Auto-scroll to latest messages
+  useEffect(() => {
+    const chatContainer = document.querySelector('.max-h-96');
+    if (chatContainer) {
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+  }, [conversation, currentTranscript]);
 
   return (
     <main className="min-h-screen bg-gray-50 py-8 px-4">
@@ -219,6 +252,47 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
               </div>
             </div>
 
+            {/* Conversation Panel */}
+            <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 mb-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-4">Conversation</h3>
+              
+              {/* Chat Messages */}
+              <div className="space-y-4 max-h-96 overflow-y-auto mb-4">
+                {conversation.map((message) => (
+                  <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                      message.type === 'user' 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 text-gray-900'
+                    }`}>
+                      <p className="text-sm">{message.content}</p>
+                      <p className="text-xs opacity-70 mt-1">
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                
+                {/* Show current transcription while speaking */}
+                {currentTranscript && (
+                  <div className="flex justify-end">
+                    <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-blue-200 text-blue-900">
+                      <p className="text-sm italic">{currentTranscript}...</p>
+                      <p className="text-xs opacity-70 mt-1">Speaking...</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Clear Chat Button */}
+              <button
+                onClick={() => setConversation([])}
+                className="text-sm text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear conversation
+              </button>
+            </div>
+
             {/* PDF Viewer Panel */}
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 relative overflow-hidden">
               
@@ -273,24 +347,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                     <i className="material-icons text-sm mr-2">upload</i>
                     Upload PDF
                   </button>
-                </div>
-              )}
-
-              {/* Gemini Speaking Overlay */}
-              {isGeminiSpeaking && (
-                <div className="absolute inset-0 bg-black bg-opacity-75 rounded-2xl flex items-center justify-center z-20">
-                  <div className="text-center text-white">
-                    <div className="mb-6">
-                      <div className="flex justify-center space-x-2">
-                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg"></div>
-                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.2s' }}></div>
-                        <div className="w-5 h-5 bg-blue-400 rounded-full animate-bounce shadow-lg" style={{ animationDelay: '0.3s' }}></div>
-                      </div>
-                    </div>
-                    <h3 className="text-2xl font-bold mb-2">Gemini is speaking...</h3>
-                    <p className="text-blue-200">Please wait while AI responds</p>
-                  </div>
                 </div>
               )}
             </div>
