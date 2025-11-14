@@ -14,7 +14,7 @@ export default function Demo() {
         <div className="relative glass rounded-2xl p-2 shadow-2xl">
           <div className="relative pb-[56.25%] h-0 overflow-hidden rounded-xl">
             <iframe
-              src="https://www.youtube.com/embed/B1NTSGHPxjo"
+              src="https://www.youtube.com/embed/IX8uNB4tOP4"
               title="DocTalk Demo"
               frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
