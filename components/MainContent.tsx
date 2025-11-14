@@ -137,8 +137,21 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
           }
         }
         
+        // Handle user queries extracted from tool calls
+        if (messageData.user_query && messageData.query_from_tool) {
+          const userMessage = {
+            id: Date.now().toString() + '_user',
+            type: 'user' as const,
+            content: messageData.user_query,
+            timestamp: new Date()
+          };
+          setConversation(prev => [...prev, userMessage]);
+          setTranscriptAddedToConversation(true); // Prevent duplicate addition
+          return; // Don't process other message types
+        }
+        
         // Handle AI text responses
-        if (messageData.text && !messageData.user_transcript && !messageData.transcript_partial) {
+        if (messageData.text && !messageData.user_transcript && !messageData.transcript_partial && !messageData.user_query) {
           // ONLY add the user message if we haven't already added it
           if (currentTranscript.trim() && !transcriptAddedToConversation) {
             const userMessage = {
@@ -234,7 +247,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   className="bg-gray-900 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-gray-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
                   <i className="material-icons text-xl">mic</i>
-                  <span>Start Talking</span>
+                  <span>Start Recording</span>
                 </button>
                 
                 <button
@@ -244,7 +257,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   className="bg-red-600 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-red-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
                   <i className="material-icons text-xl">stop</i>
-                  <span>Stop Talking</span>
+                  <span>Stop Recording</span>
                 </button>
               </div>
             </div>

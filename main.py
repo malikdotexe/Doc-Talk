@@ -200,7 +200,6 @@ tool_delete_doc = {
     }]
 }
 
-
 async def gemini_session_handler(client_websocket):
     """
     Handle a WebSocket connection from the frontend client.
@@ -289,17 +288,17 @@ async def gemini_session_handler(client_websocket):
                             if chunk.get("mime_type") == "audio/pcm":
                                 print(f"🎤 Audio chunk ({len(chunk.get('data', ''))} bytes)")
                                 
-                                # Transcribe this chunk
-                                transcript = transcribe_audio(chunk.get('data', ''))
-                                if transcript:
-                                    transcription_chunks.append(transcript)
-                                    user_transcript = " ".join(transcription_chunks)
+                                # Comment out transcription calls
+                                # transcript = transcribe_audio(chunk.get('data', ''))
+                                # if transcript:
+                                #     transcription_chunks.append(transcript)
+                                #     user_transcript = " ".join(transcription_chunks)
                                     
-                                    # Send partial transcription to frontend
-                                    await client_websocket.send(json.dumps({
-                                        "user_transcript": user_transcript,
-                                        "transcript_partial": True
-                                    }))
+                                #     # Send partial transcription to frontend
+                                #     await client_websocket.send(json.dumps({
+                                #         "user_transcript": user_transcript,
+                                #         "transcript_partial": True
+                                #     }))
                                 
                                 # Forward audio to Gemini
                                 await gemini_ws.send(json.dumps(data))
@@ -316,6 +315,7 @@ async def gemini_session_handler(client_websocket):
                 async for raw_response in gemini_ws:
                     response = json.loads(raw_response)
                     
+                    print(f"🔍 Full response: {json.dumps(response, indent=2, default=str)[:500]}...")
 
                     # Handle tool calls from Gemini
                     if "toolCall" in response:
@@ -330,20 +330,24 @@ async def gemini_session_handler(client_websocket):
                             
                             if name == "query_docs":
                                 try:
-                                    result = query_docs(args.get("query", ""), user_id)
+                                    result = query_docs(args["query"], user_id)
+                                    
+                                    # Send the user's query to frontend BEFORE the AI response
+                                    await client_websocket.send(json.dumps({
+                                        "user_query": args["query"],  # Send the interpreted query
+                                        "query_from_tool": True
+                                    }))
+                                    
                                     function_responses.append({
                                         "name": name,
                                         "response": {"result": result},
-                                        "id": call_id
+                                        "id": call_id  
                                     })
-                                    print("✅ query_docs executed")
+                                    
+                                    print("Function executed")
                                 except Exception as e:
-                                    print(f"❌ query_docs error: {e}")
-                                    function_responses.append({
-                                        "name": name,
-                                        "response": {"error": str(e)},
-                                        "id": call_id
-                                    })
+                                    print(f"Error executing function: {e}")
+                                    continue
                             
                             elif name == "delete_document":
                                 try:
@@ -432,7 +436,7 @@ async def gemini_session_handler(client_websocket):
         if gemini_ws:
             await gemini_ws.close()
         print(f"🏁 Session ended for {user_id}")
-
+        
 async def process_pdf(client_websocket, user_id, chunk):
     """Process PDF upload separately"""
     try:
