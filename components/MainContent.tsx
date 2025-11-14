@@ -3,6 +3,7 @@ import UploadedDocuments from "@/components/UploadedDocuments";
 
 import { useEffect, useRef, useState } from 'react';  
 import { useAudioWebSocket } from '@/hooks/useAudioWebSocket';
+import { supabase } from "@/lib/supabaseClient";
 
 export default function MainContent({ useOCR }: { useOCR: boolean }){
   const {
@@ -19,12 +20,9 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
   const chatLogRef = useRef<HTMLDivElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   
-  // NEW: State for selected PDF and upload progress
   const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
-  
-  // NEW: Animation states
   const [currentStatus, setCurrentStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
 
   const [conversation, setConversation] = useState<Array<{
@@ -34,6 +32,8 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     timestamp: Date;
   }>>([]);
   const [currentTranscript, setCurrentTranscript] = useState("");
+  // NEW: Track if we've already added the current transcript as a user message
+  const [transcriptAddedToConversation, setTranscriptAddedToConversation] = useState(false);
 
   useEffect(() => {
     if (chatLogRef.current) {
@@ -41,7 +41,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   }, [messages]);
 
-  // NEW: Track user recording state
   useEffect(() => {
     if (isRecording) {
       setCurrentStatus('recording');
@@ -50,11 +49,9 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   }, [isRecording]);
 
-  // NEW: Handle PDF selection from sidebar
   const handlePdfSelect = async (filename: string) => {
     setSelectedPdf(filename);
     
-    // Fetch and display the selected PDF
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -75,7 +72,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   };
 
-  // Modified: Enhanced PDF upload handler with progress
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -83,7 +79,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       setUploadProgress(0);
       setCurrentStatus('processing');
       
-      // Simulate progress updates during upload
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => Math.min(prev + 10, 90));
       }, 200);
@@ -91,7 +86,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       try {
         await handlePdfUpload(file, useOCR);
         setUploadProgress(100);
-        setSelectedPdf(file.name); // Auto-select newly uploaded PDF
+        setSelectedPdf(file.name);
         
         setTimeout(() => {
           setIsUploading(false);
@@ -113,7 +108,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     }
   };
 
-  // Status display helper
   const getStatusDisplay = () => {
     switch (currentStatus) {
       case 'recording':
@@ -134,23 +128,41 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       try {
         const messageData = JSON.parse(event.data);
         
-        // Handle user transcription
+        // Handle user transcription updates (partial transcripts while speaking)
         if (messageData.user_transcript) {
           setCurrentTranscript(messageData.user_transcript);
+          // Reset the flag when we get a new transcript
+          if (messageData.transcript_partial) {
+            setTranscriptAddedToConversation(false);
+          }
         }
         
-        // Handle AI text responses - simplified condition
-        if (messageData.text) {
-          // Skip if this is just a transcription update (not AI response)
-          if (!messageData.user_transcript && !messageData.transcript_partial) {
-            const aiMessage = {
-              id: Date.now().toString(),
-              type: 'ai' as const,
-              content: messageData.text,
+        // Handle AI text responses
+        if (messageData.text && !messageData.user_transcript && !messageData.transcript_partial) {
+          // ONLY add the user message if we haven't already added it
+          if (currentTranscript.trim() && !transcriptAddedToConversation) {
+            const userMessage = {
+              id: Date.now().toString() + '_user',
+              type: 'user' as const,
+              content: currentTranscript.trim(),
               timestamp: new Date()
             };
-            setConversation(prev => [...prev, aiMessage]);
+            setConversation(prev => [...prev, userMessage]);
+            setTranscriptAddedToConversation(true); // Mark as added
           }
+          
+          // Add the AI response
+          const aiMessage = {
+            id: Date.now().toString() + '_ai',
+            type: 'ai' as const,
+            content: messageData.text,
+            timestamp: new Date()
+          };
+          setConversation(prev => [...prev, aiMessage]);
+          
+          // Clear the transcript for the next question
+          setCurrentTranscript("");
+          setTranscriptAddedToConversation(false);
         }
         
       } catch (err) {
@@ -162,20 +174,11 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       webSocket.addEventListener('message', handleWebSocketMessage);
       return () => webSocket.removeEventListener('message', handleWebSocketMessage);
     }
-  }, [webSocket]);
+  }, [webSocket, currentTranscript, transcriptAddedToConversation]);
 
-  useEffect(() => {
-    if (!isRecording && currentTranscript) {
-      const userMessage = {
-        id: Date.now().toString(),
-        type: 'user' as const,
-        content: currentTranscript,
-        timestamp: new Date()
-      };
-      setConversation(prev => [...prev, userMessage]);
-      setCurrentTranscript("");
-    }
-  }, [isRecording, currentTranscript]);
+  // REMOVED: The duplicate useEffect that was adding user messages when recording stopped
+  // This was causing the double-add issue
+
   // Auto-scroll to latest messages
   useEffect(() => {
     const chatContainer = document.querySelector('.max-h-96');
@@ -189,7 +192,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* Left Sidebar - Documents */}
           <div className="lg:col-span-3">
             <div className="sticky top-8">
               <UploadedDocuments 
@@ -200,19 +202,15 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
             </div>
           </div>
 
-          {/* Main Content Area */}
           <div className="lg:col-span-9">
             
-            {/* Voice Control Panel */}
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 mb-6">
               
-              {/* Status Header */}
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-gray-900">
                   Voice Assistant
                 </h2>
                 
-                {/* Unified Status Indicator */}
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-50 border border-gray-200">
                     <div className={`w-3 h-3 rounded-full transition-all duration-300 ${
@@ -228,7 +226,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 </div>
               </div>
 
-              {/* Voice Controls */}
               <div className="flex gap-4 justify-center">
                 <button
                   id="startButton"
@@ -237,7 +234,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   className="bg-gray-900 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-gray-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
                   <i className="material-icons text-xl">mic</i>
-                  <span>Start Recording</span>
+                  <span>Start Talking</span>
                 </button>
                 
                 <button
@@ -247,16 +244,14 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                   className="bg-red-600 text-white py-4 px-8 border-none rounded-xl text-lg font-semibold cursor-pointer hover:bg-red-700 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
                   <i className="material-icons text-xl">stop</i>
-                  <span>Stop Recording</span>
+                  <span>Stop Talking</span>
                 </button>
               </div>
             </div>
 
-            {/* Conversation Panel */}
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 mb-6">
               <h3 className="text-xl font-bold text-gray-900 mb-4">Conversation</h3>
               
-              {/* Chat Messages */}
               <div className="space-y-4 max-h-96 overflow-y-auto mb-4">
                 {conversation.map((message) => (
                   <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -274,7 +269,7 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 ))}
                 
                 {/* Show current transcription while speaking */}
-                {currentTranscript && (
+                {currentTranscript && !transcriptAddedToConversation && (
                   <div className="flex justify-end">
                     <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-blue-200 text-blue-900">
                       <p className="text-sm italic">{currentTranscript}...</p>
@@ -284,19 +279,20 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 )}
               </div>
               
-              {/* Clear Chat Button */}
               <button
-                onClick={() => setConversation([])}
+                onClick={() => {
+                  setConversation([]);
+                  setCurrentTranscript("");
+                  setTranscriptAddedToConversation(false);
+                }}
                 className="text-sm text-gray-500 hover:text-gray-700 underline"
               >
                 Clear conversation
               </button>
             </div>
 
-            {/* PDF Viewer Panel */}
             <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200 relative overflow-hidden">
               
-              {/* Upload Progress */}
               {isUploading && (
                 <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
                   <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
@@ -312,7 +308,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 </div>
               )}
 
-              {/* PDF Upload Input */}
               <input
                 type="file"
                 id="pdfInput"
@@ -322,7 +317,6 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
                 className="hidden"
               />
 
-              {/* PDF Viewer */}
               {pdfUrl ? (
                 <div className="relative">
                   <embed
@@ -356,5 +350,3 @@ export default function MainContent({ useOCR }: { useOCR: boolean }){
     </main>
   );
 }
-
-import { supabase } from "@/lib/supabaseClient";

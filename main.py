@@ -249,11 +249,13 @@ async def gemini_session_handler(client_websocket):
         print("✅ Gemini setup complete")
         
         user_transcript = ""
-        transcription_chunks = []
+        transcription_chunks = []  # ← MOVED INSIDE the handler function
 
         # 5. Create bidirectional message relay
         async def client_to_gemini():
             """Forward messages from client to Gemini"""
+            nonlocal transcription_chunks  # ← Allow modification of outer variable
+            
             try:
                 async for message in client_websocket:
                     data = json.loads(message)
@@ -283,7 +285,7 @@ async def gemini_session_handler(client_websocket):
                                 await process_pdf(client_websocket, user_id, chunk)
                                 continue
                             
-                            # Forward audio to Gemini
+                            # Handle audio
                             if chunk.get("mime_type") == "audio/pcm":
                                 print(f"🎤 Audio chunk ({len(chunk.get('data', ''))} bytes)")
                                 
@@ -308,11 +310,12 @@ async def gemini_session_handler(client_websocket):
         
         async def gemini_to_client():
             """Forward messages from Gemini to client"""
+            nonlocal transcription_chunks  # ← Allow modification of outer variable
+            
             try:
                 async for raw_response in gemini_ws:
                     response = json.loads(raw_response)
                     
-                    print(f"🔍 Full response: {json.dumps(response, indent=2, default=str)[:500]}...")
 
                     # Handle tool calls from Gemini
                     if "toolCall" in response:
@@ -374,7 +377,7 @@ async def gemini_session_handler(client_websocket):
                         # Extract text
                         if "modelTurn" in server_content:
                             parts = server_content["modelTurn"].get("parts", [])
-                            print(f"�� Parts found: {len(parts)}")
+                            print(f"📝 Parts found: {len(parts)}")
                             for i, part in enumerate(parts):
                                 print(f"🔸 Part {i}: {json.dumps(part, indent=2, default=str)[:200]}...")
                                 if "text" in part:
@@ -382,7 +385,7 @@ async def gemini_session_handler(client_websocket):
                                     await client_websocket.send(json.dumps({"text": part["text"]}))
                                 
                                 if "inlineData" in part:
-                                    print(f"�� Audio data found")
+                                    print(f"🔊 Audio data found")
                                     await client_websocket.send(json.dumps({
                                         "audio": part["inlineData"]["data"]
                                     }))
@@ -405,7 +408,9 @@ async def gemini_session_handler(client_websocket):
                                             await client_websocket.send(json.dumps({"text": formatted_result}))
                         
                         if server_content.get("turnComplete"):
-                            print("✅ Turn complete")
+                            print("✅ Turn complete - clearing transcription chunks")
+                            # ← CRITICAL FIX: Clear transcription chunks after each complete turn
+                            transcription_chunks = []
                     
             except websockets.exceptions.ConnectionClosed:
                 print("🔌 Gemini disconnected")
@@ -427,7 +432,6 @@ async def gemini_session_handler(client_websocket):
         if gemini_ws:
             await gemini_ws.close()
         print(f"🏁 Session ended for {user_id}")
-
 
 async def process_pdf(client_websocket, user_id, chunk):
     """Process PDF upload separately"""
