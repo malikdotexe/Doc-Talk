@@ -54,3 +54,4 @@ storage/
 *.swp
 *.swo
 *~
+etc/secrets/gcp-service-key.json
